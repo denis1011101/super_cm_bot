@@ -1,0 +1,1 @@
+Bot only for fun.
