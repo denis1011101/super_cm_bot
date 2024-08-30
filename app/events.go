@@ -48,12 +48,9 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	// Проверка времени последнего обновления
-	if lastUpdate.Valid {
-		duration := time.Since(lastUpdate.Time)
-		if duration.Seconds() < 24 {
-			// sendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
-			return
-		}
+	shouldReturn := validateLastUpdate(lastUpdate, chatID, bot, update)
+	if shouldReturn {
+		return
 	}
 
 	// Выполнение спина
@@ -106,6 +103,17 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	// sendMessage(chatID, responseText, bot, update.Message.MessageID)
 }
 
+func validateLastUpdate(lastUpdate sql.NullTime, chatID int64, bot *tgbotapi.BotAPI, update tgbotapi.Update) bool {
+	if lastUpdate.Valid {
+		duration := time.Since(lastUpdate.Time)
+		if duration.Hours() < 24 {
+			//sendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
+			return true
+		}
+	}
+	return false
+}
+
 // ChooseGiga выбирает "красавчика"
 func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	chatID := update.Message.Chat.ID
@@ -118,12 +126,9 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		return
 	}
 
-	if lastUpdate.Valid {
-		duration := time.Since(lastUpdate.Time)
-		if duration.Seconds() < 24 {
-			// sendMessage(chatID, "Вы можете выбрать красавчика только раз в 24 часа.", bot, update.Message.MessageID)
-			return
-		}
+	shouldReturn := validateLastUpdate(lastUpdate, chatID, bot, update)
+	if shouldReturn {
+		return
 	}
 
 	// Получение списка участников группы через получение всех pen_name из базы данных
@@ -199,12 +204,9 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		return
 	}
 
-	if lastUpdate.Valid {
-		duration := time.Since(lastUpdate.Time)
-		if duration.Seconds() < 24*60*60 {
-			// sendMessage(chatID, "Вы можете выбрать красавчика только раз в 24 часа.", bot, update.Message.MessageID)
-			return
-		}
+	shouldReturn := validateLastUpdate(lastUpdate, chatID, bot, update)
+	if shouldReturn {
+		return
 	}
 
 	// Получение списка участников группы через получение всех pen_name из базы данных
