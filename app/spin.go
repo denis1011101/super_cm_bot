@@ -2,10 +2,12 @@ package app
 
 import (
 	"math/rand"
+	"time"
 )
 
-type pen struct {
-	Size int
+type Pen struct {
+	Size           int
+	LastUpdateTime time.Time
 }
 
 type SpinpenResult struct {
@@ -13,19 +15,19 @@ type SpinpenResult struct {
 	Size       int
 }
 
-func SpinpenSize(pen pen) SpinpenResult {
+func SpinPenSize(pen Pen) SpinpenResult {
 	return calculateResult(pen, false, false)
 }
 
-func SpinAddpenSize(pen pen) SpinpenResult {
+func SpinAddPenSize(pen Pen) SpinpenResult {
 	return calculateResult(pen, true, false)
 }
 
-func SpinDiffpenSize(pen pen) SpinpenResult {
+func SpinDiffPenSize(pen Pen) SpinpenResult {
 	return calculateResult(pen, false, true)
 }
 
-func calculateResult(pen pen, needAdd bool, needDiff bool) SpinpenResult {
+func calculateResult(pen Pen, needAdd bool, needDiff bool) SpinpenResult {
 	if !needAdd && needReset(pen) {
 		return SpinpenResult{ResultType: "RESET", Size: 0}
 	}
@@ -75,7 +77,7 @@ func calculateResult(pen pen, needAdd bool, needDiff bool) SpinpenResult {
 	}
 }
 
-func needReset(pen pen) bool {
+func needReset(pen Pen) bool {
 	return rand.Intn(pen.Size*10000+10000000) > 9900000
 }
 
@@ -97,23 +99,23 @@ func calculateRandSize(randomInt int) int {
 }
 
 type Member struct {
-	ID	 int
+	ID   int64
 	Name string
 }
 
 type SpinAction struct{}
 
 type SpinMemberResult struct {
-    ResultType   string
-    AnotherField int // Add any other fields here
+	ResultType   string
+	AnotherField int // Add any other fields here
 }
 
 // SpinunhandsomeOrGiga выбирает случайного члена из списка членов
 func SpinunhandsomeOrGiga(members []Member) Member {
-    if len(members) == 0 || len(members) == 1 {
-        return Member{}
-    }
-    randomInt := rand.Intn((len(members) * 1000000) - 1)
-    selectedMember := members[randomInt / 1000000]
-    return selectedMember
+	if len(members) == 0 {
+		return Member{}
+	}
+	randomInt := rand.Intn((len(members) * 1000000) - 1)
+	selectedMember := members[randomInt/1000000]
+	return selectedMember
 }

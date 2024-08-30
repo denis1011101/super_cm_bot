@@ -7,7 +7,7 @@ import (
 )
 
 // sendMessage отправляет сообщение в чат или как ответ на конкретное сообщение
-func sendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) {
+func SendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	if replyToMessageID != 0 {
 		msg.ReplyToMessageID = replyToMessageID

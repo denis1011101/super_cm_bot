@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/denis1011101/super_cum_bot/app"
+	"github.com/denis1011101/super_cum_bot/app/handlers"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
@@ -91,25 +92,25 @@ func main() {
     }()
 
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
-		"/pen":           app.HandleSpin,
-		"/giga":          app.ChooseGiga,
-		"/unhandsome":    app.ChooseUnhandsome,
-		"/topLength":     app.TopLength,
-		"/topGiga":       app.TopGiga,
-		"/topUnhandsome": app.TopUnhandsome,
+		"/pen":           handlers.HandleSpin,
+		"/giga":          handlers.ChooseGiga,
+		"/unhandsome":    handlers.ChooseUnhandsome,
+		"/topLength":     handlers.TopLength,
+		"/topGiga":       handlers.TopGiga,
+		"/topUnhandsome": handlers.TopUnhandsome,
 	}
 
 	for update := range updates {
 		if update.Message != nil {
 			chatID := update.Message.Chat.ID
-            if chatID == specificChatID {
+	        if chatID == specificChatID {
 				if handler, exists := commandHandlers[update.Message.Text]; exists {
 					handler(update, bot, db)
 				} else {
-					app.HandlepenCommand(update, bot, db)
+					handlers.HandlePenCommand(update, bot, db)
 				}
 			} else if update.MyChatMember != nil {
-				app.HandleBotAddition(update, bot)
+				handlers.HandleBotAddition(update, bot)
 			}
 		}
 	}
