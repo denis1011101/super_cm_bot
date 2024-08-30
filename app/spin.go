@@ -2,7 +2,6 @@ package app
 
 import (
 	"math/rand"
-	"time"
 )
 
 type pen struct {
@@ -100,7 +99,6 @@ func calculateRandSize(randomInt int) int {
 type Member struct {
 	ID	 int
 	Name string
-	Result string 
 }
 
 type SpinAction struct{}
@@ -116,33 +114,6 @@ func SpinunhandsomeOrGiga(members []Member) Member {
         return Member{}
     }
     randomInt := rand.Intn((len(members) * 1000000) - 1)
-    selectedMember := members[randomInt/1000000]
-    result := GenerateSpinMemberResult(selectedMember)
-    selectedMember.Result = result.ResultType
+    selectedMember := members[randomInt / 1000000]
     return selectedMember
-}
-
-const (
-    SECRET = "SECRET"
-    FIRST  = "FIRST"
-    SECOND = "SECOND"
-    THIRD  = "THIRD"
-)
-
-// GenerateSpinMemberResult генерирует случайный результат для спина
-func GenerateSpinMemberResult(selectedMember Member) SpinMemberResult {
-    rand.Seed(time.Now().UnixNano())
-    randInt := rand.Intn(10000001) // Генерирует число от 0 до 10,000,000
-
-    if randInt <= 300000 {
-        return SpinMemberResult{ResultType: SECRET}
-    }
-    if randInt > 300000 && randInt <= 3300000 {
-        return SpinMemberResult{ResultType: FIRST}
-    }
-    if randInt > 3300000 && randInt <= 6600000 {
-        return SpinMemberResult{ResultType: SECOND}
-    }
-
-    return SpinMemberResult{ResultType: THIRD}
 }
