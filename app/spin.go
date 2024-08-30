@@ -14,22 +14,20 @@ type SpinpenResult struct {
 	Size       int
 }
 
-type SpinpenSizeAction struct{}
-
-func (s *SpinpenSizeAction) SpinpenSize(pen pen) SpinpenResult {
-	return s.calculateResult(pen, false, false)
+func SpinpenSize(pen pen) SpinpenResult {
+	return calculateResult(pen, false, false)
 }
 
-func (s *SpinpenSizeAction) SpinAddpenSize(pen pen) SpinpenResult {
-	return s.calculateResult(pen, true, false)
+func SpinAddpenSize(pen pen) SpinpenResult {
+	return calculateResult(pen, true, false)
 }
 
-func (s *SpinpenSizeAction) SpinDiffpenSize(pen pen) SpinpenResult {
-	return s.calculateResult(pen, false, true)
+func SpinDiffpenSize(pen pen) SpinpenResult {
+	return calculateResult(pen, false, true)
 }
 
-func (s *SpinpenSizeAction) calculateResult(pen pen, needAdd bool, needDiff bool) SpinpenResult {
-	if !needAdd && s.needReset(pen) {
+func calculateResult(pen pen, needAdd bool, needDiff bool) SpinpenResult {
+	if !needAdd && needReset(pen) {
 		return SpinpenResult{ResultType: "RESET", Size: 0}
 	}
 
@@ -62,7 +60,7 @@ func (s *SpinpenSizeAction) calculateResult(pen pen, needAdd bool, needDiff bool
 		multiplicator = -1
 	}
 
-	size := s.calculateRandSize(randomInt * multiplicator)
+	size := calculateRandSize(randomInt * multiplicator)
 
 	if size > 0 {
 		size *= multiplicator
@@ -78,11 +76,11 @@ func (s *SpinpenSizeAction) calculateResult(pen pen, needAdd bool, needDiff bool
 	}
 }
 
-func (s *SpinpenSizeAction) needReset(pen pen) bool {
+func needReset(pen pen) bool {
 	return rand.Intn(pen.Size*10000+10000000) > 9900000
 }
 
-func (s *SpinpenSizeAction) calculateRandSize(randomInt int) int {
+func calculateRandSize(randomInt int) int {
 	switch {
 	case randomInt > 500000 && randomInt <= 4000000:
 		return 1

@@ -57,9 +57,8 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	// Выполнение спина
-	action := SpinpenSizeAction{}
 	pen := pen{Size: currentSize}
-	result := action.SpinpenSize(pen)
+	result := SpinpenSize(pen)
 
 	// Обновление размера пениса и времени последнего обновления в базе данных
 	newSize := currentSize + result.Size
@@ -167,8 +166,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
     log.Printf("Current pen size for tg_pen_id %d in chat_id %d: %d", randomMember.ID, chatID, currentSize)
 
 	// Вычисление нового размера
-	spinAction := SpinpenSizeAction{}
-	result := spinAction.SpinAddpenSize(pen{Size: currentSize})
+	result := SpinAddpenSize(pen{Size: currentSize})
 	newSize := currentSize + result.Size
 
 	// Обновление значения у выигравшего участника и времени последнего обновления у всех участников
@@ -249,8 +247,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
     log.Printf("Current pen size for tg_pen_id %d in chat_id %d: %d", randomMember.ID, chatID, currentSize)
 
 	// Вычисление нового размера
-	spinAction := SpinpenSizeAction{}
-	result := spinAction.SpinAddpenSize(pen{Size: currentSize})
+	result := SpinAddpenSize(pen{Size: currentSize})
 	newSize := currentSize - result.Size
 
 	// Обновление значения у выигравшего участника и времени последнего обновления у всех участников
