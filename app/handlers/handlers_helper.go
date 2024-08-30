@@ -11,12 +11,12 @@ import (
 )
 
 func checkLastUpdate(lastUpdate time.Time) bool {
-	// if !lastUpdate.IsZero() {
-	// 	duration := time.Since(lastUpdate)
-	// 	if duration.Hours() < 24 {
-	// 		return true
-	// 	}
-	// }
+	if !lastUpdate.IsZero() {
+		duration := time.Since(lastUpdate)
+		if duration.Hours() < 24 {
+			return true
+		}
+	}
 	return false
 }
 
