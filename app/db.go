@@ -9,8 +9,22 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+const sqliteTimestampLayout = "2006-01-02 15:04:05Z07:00"
+
 // InitDB инициализирует базу данных
 func InitDB() (*sql.DB, error) {
+    dbDir := "./data"
+
+    // Проверка, существует ли директория базы данных
+    if _, err := os.Stat(dbDir); os.IsNotExist(err) {
+        // Директория не существует, создаём её
+        err = os.MkdirAll(dbDir, os.ModePerm)
+        if err != nil {
+            log.Printf("Error creating directory: %v", err)
+            return nil, err
+        }
+    }
+
 	dbPath := "./data/pens.db"
 
 	// Проверка, существует ли файл базы данных
@@ -125,6 +139,7 @@ func GetGigaLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 		return time.Time{}, err
 	}
 
+	// После функции MAX() sqlite возвращает текстовый тип, поэтому надо преобразовать его к типу time
     parsedTime, err := time.Parse(sqliteTimestampLayout, lastUpdateText.String)
 	if err != nil {
 		log.Printf("Error parsing time: %v", err)
@@ -142,6 +157,7 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 		return time.Time{}, err
 	}
 
+	// После функции MAX() sqlite возвращает текстовый тип, поэтому надо преобразовать его к типу time
     parsedTime, err := time.Parse(sqliteTimestampLayout, lastUpdateText.String)
 	if err != nil {
 		log.Printf("Error parsing time: %v", err)
@@ -176,5 +192,3 @@ func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
 		return
 	}
 }
-
-const sqliteTimestampLayout = "2006-01-02 15:04:05Z07:00"
