@@ -16,7 +16,7 @@ go mod download
 go mod down
 ```
 
-3. Create ф `.env` file based on `.env_example` and add the following:
+3. Create a `.env` file based on `.env_example` and add the following:
 ```sh
 cp .env_example .env
 # Open .env and add BOT_TOKEN и SPECIFIC_CHAT_ID
