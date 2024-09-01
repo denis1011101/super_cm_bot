@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/denis1011101/super_cum_bot/app"
 	"github.com/denis1011101/super_cum_bot/app/handlers"
@@ -91,6 +92,18 @@ func main() {
         }
     }()
 
+    // Запуск резервного копирования в отдельной горутине
+    go func() {
+        // Настройка таймера для выполнения раз в день
+        ticker := time.NewTicker(24 * time.Hour)
+        defer ticker.Stop()
+
+        for range ticker.C {
+            app.BackupDatabase(db)
+        }
+    }()
+
+	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
 		"/pen":           handlers.HandleSpin,
 		"/giga":          handlers.ChooseGiga,
@@ -100,16 +113,18 @@ func main() {
 		"/topUnhandsome": handlers.TopUnhandsome,
 	}
 
+	// Обработка обновлений
 	for update := range updates {
 		if update.Message != nil {
 			chatID := update.Message.Chat.ID
 	        if chatID == specificChatID {
+				// Обработка команд
 				if handler, exists := commandHandlers[update.Message.Text]; exists {
 					handler(update, bot, db)
-				} else {
+				} else { // Обработка обычных сообщений
 					handlers.HandlePenCommand(update, bot, db)
 				}
-			} else if update.MyChatMember != nil {
+			} else if update.MyChatMember != nil { // Обработка добавления бота в чат
 				handlers.HandleBotAddition(update, bot)
 			}
 		}

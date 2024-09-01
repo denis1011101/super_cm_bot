@@ -2,12 +2,16 @@ package app
 
 import (
 	"database/sql"
+	"os/exec"
 	"log"
 	"os"
 	"time"
+    "path/filepath"
 
 	_ "github.com/mattn/go-sqlite3"
 )
+
+const sqliteTimestampLayout = "2006-01-02 15:04:05Z07:00"
 
 // InitDB инициализирует базу данных
 func InitDB() (*sql.DB, error) {
@@ -152,7 +156,7 @@ func GetGigaLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 		log.Printf("Last update time retrieved successfully")
 	}
 	if lastUpdateText.Valid {
-		lastUpdate, err := time.Parse(time.RFC3339, lastUpdateText.String)
+		lastUpdate, err := time.Parse(sqliteTimestampLayout, lastUpdateText.String)
 		if err != nil {
 			log.Printf("Error parsing last update time: %v", err)
 			return time.Time{}, err
@@ -173,7 +177,7 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 		log.Printf("Last update time retrieved successfully")
 	}
 	if lastUpdateText.Valid {
-		lastUpdate, err := time.Parse(time.RFC3339, lastUpdateText.String)
+		lastUpdate, err := time.Parse(sqliteTimestampLayout, lastUpdateText.String)
 		if err != nil {
 			log.Printf("Error parsing last update time: %v", err)
 			return time.Time{}, err
@@ -186,7 +190,7 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 }
 
 func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
-    _, err := db.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1, handsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now().Format(time.RFC3339), userID, chatID)
+    _, err := db.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1, handsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
 	if err != nil {
 		log.Printf("Error updating giga count and last_update_at : %v", err)
 	} else {
@@ -195,10 +199,45 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 }
 
 func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
-	_, err := db.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1, unhandsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now().Format(time.RFC3339), userID, chatID)
+	_, err := db.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1, unhandsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
     if err != nil {
         log.Printf("Error updating unhandsome count and last_update_at: %v", err)
     } else {
         log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d", userID, chatID)
     }
+}
+
+// BackupDatabase создает резервную копию базы данных SQLite
+func BackupDatabase(db *sql.DB) {
+    // Определение пути к файлу резервной копии в корневом каталоге
+    dbFile := "data/pens.db"
+    backupDir := "backups"
+
+    // Генерация уникального имени файла резервной копии на основе текущей даты и времени
+    timestamp := time.Now().Format("20060102_150405")
+    backupFile := filepath.Join(backupDir, "database_backup_"+timestamp+".db")
+
+    // Создание директории для резервной копии, если она не существует
+    if _, err := os.Stat(backupDir); os.IsNotExist(err) {
+        if err := os.MkdirAll(backupDir, 0755); err != nil {
+            log.Fatalf("Cannot create backup directory: %s, error: %v", backupDir, err)
+        }
+    }
+
+    // Проверка существования файла базы данных
+    if _, err := os.Stat(dbFile); os.IsNotExist(err) {
+        log.Fatalf("Database file does not exist: %s", dbFile)
+    }
+
+    // Выполнение команды для создания резервной копии
+    cmd := exec.Command("sqlite3", dbFile, "-cmd", ".backup "+backupFile, ".exit")
+
+	// Захват стандартного вывода и стандартного вывода ошибок
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Fatalf("Error creating backup: %v, output: %s", err, string(output))
+	}
+
+    // Вывод сообщения об успешном создании резервной копии
+    log.Printf("Backup created successfully at %s", backupFile)
 }

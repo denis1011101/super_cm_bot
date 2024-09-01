@@ -1,5 +1,6 @@
 .env
-.bot
+bot
 /data/
 /logs/
+/backups/
 __debug_**.exe
