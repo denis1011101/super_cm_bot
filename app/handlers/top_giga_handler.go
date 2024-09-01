@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/denis1011101/super_cum_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -35,5 +36,5 @@ func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	// Отправка сообщения
-	// app.SendMessage(chatID, sb.String(), bot, update.Message.MessageID)
+	app.SendMessage(chatID, sb.String(), bot, update.Message.MessageID)
 }

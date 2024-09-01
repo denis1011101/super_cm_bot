@@ -18,8 +18,10 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		return
 	}
 
+	// Проверка времени последнего обновления
 	shouldReturn := checkLastUpdate(lastUpdate)
 	if shouldReturn {
+		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
 		return
 	}
 
@@ -31,7 +33,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	// if len(members) <= 1 {
-	// 	sendMessage(chatID, "Недостаток пенисов в чате!", bot, update.Message.MessageID)
+	// 	app.SendMessage(chatID, "Недостаток пенисов в чате!", bot, update.Message.MessageID)
 	// 	return
 	// }
 
@@ -58,7 +60,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	result := app.SpinAddPenSize(pen)
 	newSize := pen.Size + result.Size
 
-	// Обновление значения у выигравшего участника и времени последнего обновления у всех участников
+	// Обновление значения члена и времени последнего обновления у выигравшего участника
 	app.UpdateGiga(db, newSize, randomMember.ID, chatID)
 
 	// Отправка сообщения с именем выбранного "красавчика"

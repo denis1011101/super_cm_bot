@@ -18,8 +18,10 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		return
 	}
 
+	// Проверка времени последнего обновления
 	shouldReturn := checkLastUpdate(lastUpdate)
 	if shouldReturn {
+		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
 		return
 	}
 
@@ -35,7 +37,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	}
 
 	// if len(members) <= 1 {
-	// 	sendMessage(chatID, "Недостаток пенисов в чате!", bot, update.Message.MessageID)
+	// 	app.SendMessage(chatID, "Недостаток пенисов в чате!", bot, update.Message.MessageID)
 	// 	return
 	// }
 
@@ -62,5 +64,5 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID)
 
 	// Отправка сообщения с именем выбранного "антикрасавчика"
-	app.SendMessage(chatID, fmt.Sprintf("Пусть пидором будет @%s! Твой a стал короче на %d см. Теперь он %d см.", randomMember.Name, result.Size, newSize), bot, update.Message.MessageID)
+	app.SendMessage(chatID, fmt.Sprintf("Пусть пидором будет @%s! Твой член стал короче на %d см. Теперь он %d см.", randomMember.Name, result.Size, newSize), bot, update.Message.MessageID)
 }

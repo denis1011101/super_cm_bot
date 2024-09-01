@@ -9,8 +9,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const sqliteTimestampLayout = "2006-01-02 15:04:05Z07:00"
-
 // InitDB инициализирует базу данных
 func InitDB() (*sql.DB, error) {
     dbDir := "./data"
@@ -26,6 +24,16 @@ func InitDB() (*sql.DB, error) {
     }
 
 	dbPath := "./data/pens.db"
+
+    // Проверка, существует ли директория базы данных
+    if _, err := os.Stat(dbDir); os.IsNotExist(err) {
+        // Директория не существует, создаём её
+        err = os.MkdirAll(dbDir, os.ModePerm)
+        if err != nil {
+            log.Printf("Error creating directory: %v", err)
+            return nil, err
+        }
+    }
 
 	// Проверка, существует ли файл базы данных
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -120,6 +128,8 @@ func GetUserPen(db *sql.DB, userID int64, chatID int64) (Pen, error) {
 	if err != nil {
 		log.Printf("Error querying user pen: %v", err)
 		return Pen{}, err
+	} else {
+		log.Printf("User pen retrieved successfully")
 	}
 	return Pen{currentSize, lastUpdate.Time}, err
 }
@@ -128,6 +138,8 @@ func UpdateUserPen(db *sql.DB, userID int64, chatID int64, newSize int) {
 	_, err := db.Exec("UPDATE pens SET pen_length = ?, pen_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
 	if err != nil {
 		log.Printf("Error updating pen size and last update time: %v", err)
+	} else {
+		log.Printf("Successfully updated pen size and last update time for userID: %d, chatID: %d", userID, chatID)
 	}
 }
 
@@ -136,17 +148,20 @@ func GetGigaLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	err := db.QueryRow("SELECT MAX(handsome_last_update_at) FROM pens WHERE tg_chat_id = ?", chatID).Scan(&lastUpdateText)
 	if err != nil {
 		log.Printf("Error querying last update time: %v", err)
-		return time.Time{}, err
+	} else {
+		log.Printf("Last update time retrieved successfully")
 	}
-
-	// После функции MAX() sqlite возвращает текстовый тип, поэтому надо преобразовать его к типу time
-    parsedTime, err := time.Parse(sqliteTimestampLayout, lastUpdateText.String)
-	if err != nil {
-		log.Printf("Error parsing time: %v", err)
-		return time.Time{}, err
+	if lastUpdateText.Valid {
+		lastUpdate, err := time.Parse(time.RFC3339, lastUpdateText.String)
+		if err != nil {
+			log.Printf("Error parsing last update time: %v", err)
+			return time.Time{}, err
+		}
+		log.Printf("Last update time parsed successfully")
+		return lastUpdate, nil
 	}
-
-	return parsedTime, err
+	log.Printf("Last update time is empty")
+	return time.Time{}, nil
 }
 
 func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
@@ -154,41 +169,36 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	err := db.QueryRow("SELECT MAX(unhandsome_last_update_at) FROM pens WHERE tg_chat_id = ?", chatID).Scan(&lastUpdateText)
 	if err != nil {
 		log.Printf("Error querying last update time: %v", err)
-		return time.Time{}, err
+	} else {
+		log.Printf("Last update time retrieved successfully")
 	}
-
-	// После функции MAX() sqlite возвращает текстовый тип, поэтому надо преобразовать его к типу time
-    parsedTime, err := time.Parse(sqliteTimestampLayout, lastUpdateText.String)
-	if err != nil {
-		log.Printf("Error parsing time: %v", err)
-		return time.Time{}, err
+	if lastUpdateText.Valid {
+		lastUpdate, err := time.Parse(time.RFC3339, lastUpdateText.String)
+		if err != nil {
+			log.Printf("Error parsing last update time: %v", err)
+			return time.Time{}, err
+		}
+		log.Printf("Last update time parsed successfully")
+		return lastUpdate, nil
 	}
-
-	return parsedTime, err
+	log.Printf("Last update time is empty")
+	return time.Time{}, nil
 }
 
 func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
-	_, err := db.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
+    _, err := db.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1, handsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now().Format(time.RFC3339), userID, chatID)
 	if err != nil {
-		log.Printf("Error updating giga count: %v", err)
-	}
-
-	_, err = db.Exec("UPDATE pens SET handsome_last_update_at = ? WHERE tg_chat_id = ?", time.Now(), chatID)
-	if err != nil {
-		log.Printf("Error updating last update time: %v", err)
+		log.Printf("Error updating giga count and last_update_at : %v", err)
+	} else {
+		log.Printf("Successfully updated giga count and last_update_at for userID: %d, chatID: %d", userID, chatID)
 	}
 }
 
 func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
-	_, err := db.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
-	if err != nil {
-		log.Printf("Error updating unhandsome count: %v", err)
-		return
-	}
-
-	_, err = db.Exec("UPDATE pens SET unhandsome_last_update_at = ? WHERE tg_chat_id = ?", time.Now(), chatID)
-	if err != nil {
-		log.Printf("Error updating last update time: %v", err)
-		return
-	}
+	_, err := db.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1, unhandsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now().Format(time.RFC3339), userID, chatID)
+    if err != nil {
+        log.Printf("Error updating unhandsome count and last_update_at: %v", err)
+    } else {
+        log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d", userID, chatID)
+    }
 }
