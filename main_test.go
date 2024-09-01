@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/denis1011101/super_cum_bot/app"
+	"github.com/denis1011101/super_cum_bot/app/handlers"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 )
@@ -74,7 +74,7 @@ func TestBotIntegration(t *testing.T) {
 	log.SetOutput(&logOutput)
 
 	// Вызываем тестируемую функцию
-	app.TopUnhandsome(update, bot, db)
+	handlers.TopUnhandsome(update, bot, db)
 
 	// Проверяем, что все ожидания были выполнены
 	if err := mock.ExpectationsWereMet(); err != nil {

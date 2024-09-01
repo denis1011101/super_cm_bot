@@ -2,3 +2,4 @@
 .bot
 /data/
 /logs/
+__debug_**.exe
