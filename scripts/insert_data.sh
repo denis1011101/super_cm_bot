@@ -23,10 +23,7 @@ insert_or_update() {
         echo "Updated: $pen_name"
     else
         # Вставка нового пользователя
-        tg_pen_id=$(sqlite3 $DB_FILE "SELECT COALESCE(MAX(tg_pen_id), 0) + 1 FROM pens;")
-        tg_chat_id=-882090240
-        sqlite3 $DB_FILE "INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count) VALUES ('$pen_name', $tg_pen_id, $tg_chat_id, $pen_length, $handsome_count, $unhandsome_count);"
-        echo "Inserted: $pen_name"
+        echo "Not found, push /pen: $pen_name"
     fi
 }
 
