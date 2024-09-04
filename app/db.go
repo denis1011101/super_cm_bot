@@ -143,7 +143,7 @@ func UpdateUserPen(db *sql.DB, userID int64, chatID int64, newSize int) {
 	if err != nil {
 		log.Printf("Error updating pen size and last update time: %v", err)
 	} else {
-		log.Printf("Successfully updated pen size and last update time for userID: %d, chatID: %d", userID, chatID)
+		log.Printf("Successfully updated pen size and last update time for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
 	}
 }
 
@@ -194,7 +194,7 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 	if err != nil {
 		log.Printf("Error updating giga count and last_update_at : %v", err)
 	} else {
-		log.Printf("Successfully updated giga count and last_update_at for userID: %d, chatID: %d", userID, chatID)
+		log.Printf("Successfully updated giga count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
 	}
 }
 
@@ -203,7 +203,7 @@ func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
     if err != nil {
         log.Printf("Error updating unhandsome count and last_update_at: %v", err)
     } else {
-        log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d", userID, chatID)
+        log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
     }
 }
 

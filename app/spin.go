@@ -78,7 +78,10 @@ func calculateResult(pen Pen, needAdd bool, needDiff bool) SpinpenResult {
 }
 
 func needReset(pen Pen) bool {
-	return rand.Intn(pen.Size*10000+10000000) > 9900000
+    min := pen.Size * 10000
+    max := 10000000
+    randomNumber := rand.Intn(max-min+1) + min
+    return randomNumber > 9900000
 }
 
 func calculateRandSize(randomInt int) int {

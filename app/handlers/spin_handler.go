@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
+	"fmt"
 
 	"github.com/denis1011101/super_cum_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -58,7 +58,7 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	case "DIFF":
 		switch result.Size {
 		case -1:
-			responseText = fmt.Sprintf("-1 ты чё пидр? Да я шучу. Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-1 ты чё ? Да я шучу. Твой сайз: %d см", newSize)
 		case -2:
 			responseText = fmt.Sprintf("-2 не велика потеря бро 🥸 Твой сайз: %d см", newSize)
 		case -3:
@@ -66,10 +66,11 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		case -4:
 			responseText = fmt.Sprintf("-4 не переживай до свадьбы отрастет 🤥 Твой сайз: %d см", newSize)
 		case -5:
-			responseText = fmt.Sprintf("У тебя -5 петушара🐓 И я не шучу. Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("У тебя -5  И я не шучу. Твой сайз: %d см", newSize)
 		}
 	case "RESET":
-		responseText = "Теперь ты просто пезда. Твой сайз: zero см"
+		result.Size = -pen.Size
+		responseText = "Теперь ты просто . Твой сайз: zero см"
 	case "ZERO":
 		responseText = "Чеееел... у тебя 0 см прибавилось. Твой сайз: %d см"
 	}

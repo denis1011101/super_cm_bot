@@ -49,9 +49,11 @@ The bot supports the following commands:
 
 ## Administrative
 
-- `ps aux | grep bot`          - search for bot processes
-- `kill 22148`                 - stop bot
-- `nohup ./bot &> nohup.out &` - start bot in the background
+- `ps aux | grep bot`                                   - search for bot processes
+- `kill 22148`                                          - stop bot
+- `nohup ./bot &> nohup.out &`                          - start bot in the background
+- `scp bot root@100.71.98.125:/root/apps/super_cum_bot` - send bot to remote machine
+- `scp -r root@100.71.98.125:/root/apps/super_cum_bot /path/to/local/destination`
 
 ## License
 
