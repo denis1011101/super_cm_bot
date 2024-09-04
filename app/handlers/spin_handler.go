@@ -26,7 +26,7 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	// Проверка времени последнего обновления
-	shouldReturn := checkLastUpdate(pen.LastUpdateTime)
+	shouldReturn := checkIsSpinNotLegal(pen.LastUpdateTime)
 	if shouldReturn {
 		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
 		return

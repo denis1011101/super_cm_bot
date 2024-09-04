@@ -10,14 +10,22 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-func checkLastUpdate(lastUpdate time.Time) bool {
+func checkIsSpinNotLegal(lastUpdate time.Time) bool {
 	if !lastUpdate.IsZero() {
 		duration := time.Since(lastUpdate)
-		if duration.Hours() < 24 {
+		lastUpdateIsToday := compareTimesByDate(time.Now(), lastUpdate)
+
+		if duration.Hours() < 4 && lastUpdateIsToday {
 			return true
 		}
 	}
 	return false
+}
+
+func compareTimesByDate(a, b time.Time) bool {
+	return a.Year() == b.Year() &&
+		a.Month() == b.Month() &&
+		a.Day() == b.Day()
 }
 
 func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendWelcomeMessage bool) {
