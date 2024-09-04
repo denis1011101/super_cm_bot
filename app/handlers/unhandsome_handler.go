@@ -19,7 +19,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	}
 
 	// Проверка времени последнего обновления
-	shouldReturn := checkLastUpdate(lastUpdate)
+	shouldReturn := checkIsSpinNotLegal(lastUpdate)
 	if shouldReturn {
 		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
 		return
