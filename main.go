@@ -105,12 +105,12 @@ func main() {
 
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
-		"/pen":           handlers.HandleSpin,
-		"/giga":          handlers.ChooseGiga,
-		"/unhandsome":    handlers.ChooseUnhandsome,
-		"/topLength":     handlers.TopLength,
-		"/topGiga":       handlers.TopGiga,
-		"/topUnhandsome": handlers.TopUnhandsome,
+		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,
+		"/giga@super_cum_lovers_bot":          handlers.ChooseGiga,
+		"/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
+		"/topLength@super_cum_lovers_bot":     handlers.TopLength,
+		"/topGiga@super_cum_lovers_bot":       handlers.TopGiga,
+		"/topUnhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
 	}
 
 	// Обработка обновлений

@@ -46,6 +46,13 @@ The bot supports the following commands:
 - `/topgiga`       - show the top 10 gigachats
 - `/topunhandsome` - show the top 10 unhandsome members
 
+
+## Administrative
+
+- `ps aux | grep bot`          - search for bot processes
+- `kill 22148`                 - stop bot
+- `nohup ./bot &> nohup.out &` - start bot in the background
+
 ## License
 
 [LICENSE](LICENSE)
