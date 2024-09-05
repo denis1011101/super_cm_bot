@@ -262,7 +262,7 @@ func backupDatabase() error {
 func StartBackupRoutine(db *sql.DB, mutex *sync.Mutex) {
     go func() {
         // Настройка таймера для выполнения раз в день
-        ticker := time.NewTicker(24 * time.Hour)
+        ticker := time.NewTicker(1 * time.Hour)
         defer ticker.Stop()
 
         for range ticker.C {
