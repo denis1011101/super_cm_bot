@@ -2,11 +2,13 @@ package app
 
 import (
 	"database/sql"
-	"os/exec"
 	"log"
 	"os"
+    "io"
 	"time"
     "path/filepath"
+	"fmt"
+    "sync"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -207,10 +209,10 @@ func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
     }
 }
 
-// BackupDatabase создает резервную копию базы данных SQLite
-func BackupDatabase(db *sql.DB) {
+// backupDatabase создает резервную копию базы данных SQLite
+func backupDatabase() error {
     // Определение пути к файлу резервной копии в корневом каталоге
-    dbFile := "data/pens.db"
+    source := "./data/pens.db"
     backupDir := "backups"
 
     // Генерация уникального имени файла резервной копии на основе текущей даты и времени
@@ -221,23 +223,64 @@ func BackupDatabase(db *sql.DB) {
     if _, err := os.Stat(backupDir); os.IsNotExist(err) {
         if err := os.MkdirAll(backupDir, 0755); err != nil {
             log.Fatalf("Cannot create backup directory: %s, error: %v", backupDir, err)
+			return err
         }
     }
 
     // Проверка существования файла базы данных
-    if _, err := os.Stat(dbFile); os.IsNotExist(err) {
-        log.Fatalf("Database file does not exist: %s", dbFile)
+    if _, err := os.Stat(source); os.IsNotExist(err) {
+        log.Fatalf("Database file does not exist: %s", source)
+		return fmt.Errorf("database file does not exist: %s", source)
     }
 
-    // Выполнение команды для создания резервной копии
-    cmd := exec.Command("sqlite3", dbFile, "-cmd", ".backup "+backupFile, ".exit")
+    // Открываем исходный файл базы данных для чтения
+    srcFile, err := os.Open(source)
+    if err != nil {
+        return err
+    }
+    defer srcFile.Close() // Закрываем файл после завершения функции
 
-	// Захват стандартного вывода и стандартного вывода ошибок
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Fatalf("Error creating backup: %v, output: %s", err, string(output))
-	}
+    // Создаем файл назначения для записи резервной копии
+    dstFile, err := os.Create(backupFile)
+    if err != nil {
+        return err
+    }
+    defer dstFile.Close() // Закрываем файл после завершения функции
+
+    // Копируем содержимое исходного файла в файл назначения
+    _, err = io.Copy(dstFile, srcFile)
+    if err != nil {
+        return err
+    }
 
     // Вывод сообщения об успешном создании резервной копии
     log.Printf("Backup created successfully at %s", backupFile)
+    return nil // Возвращаем nil, если все операции прошли успешно
+}
+
+// StartBackupRoutine запускает процесс резервного копирования
+func StartBackupRoutine(db *sql.DB, mutex *sync.Mutex) {
+    go func() {
+        // Настройка таймера для выполнения раз в день
+        ticker := time.NewTicker(24 * time.Hour)
+        defer ticker.Stop()
+
+        for range ticker.C {
+            // Блокируем базу данных
+            mutex.Lock()
+
+            // Выполнение резервного копирования
+            if err := backupDatabase(); err != nil {
+                log.Printf("Ошибка при резервном копировании базы данных: %v", err)
+            } else {
+                log.Println("Резервное копирование завершено успешно")
+            }
+
+            // Разблокируем базу данных
+            mutex.Unlock()
+
+            // Задержка выполнения на 24 часа
+            log.Println("Ожидание 24 часов перед следующим резервным копированием...")
+        }
+    }()
 }

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
+	"sync"
 
 	"github.com/denis1011101/super_cum_bot/app"
 	"github.com/denis1011101/super_cum_bot/app/handlers"
@@ -92,25 +92,26 @@ func main() {
         }
     }()
 
-    // Запуск резервного копирования в отдельной горутине
-    go func() {
-        // Настройка таймера для выполнения раз в день
-        ticker := time.NewTicker(24 * time.Hour)
-        defer ticker.Stop()
+	// Создаем мьютекс для блокировки базы данных
+	mutex := &sync.Mutex{}
 
-        for range ticker.C {
-            app.BackupDatabase(db)
-        }
-    }()
+	// Вызов функции резервного копирования в основном потоке
+	app.StartBackupRoutine(db, mutex)
 
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
 		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,
+		"/pen":						           handlers.HandleSpin,
 		"/giga@super_cum_lovers_bot":          handlers.ChooseGiga,
+		"/giga": 					           handlers.ChooseGiga,
 		"/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
+		"/unh":								   handlers.ChooseUnhandsome,
 		"/topLength@super_cum_lovers_bot":     handlers.TopLength,
+		"/topLen":						       handlers.TopLength,
 		"/topGiga@super_cum_lovers_bot":       handlers.TopGiga,
+		"/topGiga": 					       handlers.TopGiga,
 		"/topUnhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
+		"/topUnh":							   handlers.TopUnhandsome,
 	}
 
 	// Обработка обновлений
