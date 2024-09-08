@@ -81,6 +81,31 @@ func InitDB() (*sql.DB, error) {
 		return nil, err
 	}
 
+    // Увеличение лимитов SQLite
+    _, err = db.Exec("PRAGMA cache_size = 2000;") // Примерно 8 МБ (2000 * 4 КБ)
+    if err != nil {
+        log.Printf("Error setting cache_size: %v", err)
+        return nil, err
+    }
+
+    _, err = db.Exec("PRAGMA temp_store = MEMORY;")
+    if err != nil {
+        log.Printf("Error setting temp_store: %v", err)
+        return nil, err
+    }
+
+    _, err = db.Exec("PRAGMA mmap_size = 67108864;") // 64 МБ
+    if err != nil {
+        log.Printf("Error setting mmap_size: %v", err)
+        return nil, err
+    }
+
+    _, err = db.Exec("PRAGMA journal_mode = WAL;")
+    if err != nil {
+        log.Printf("Error setting journal_mode: %v", err)
+        return nil, err
+    }
+
 	log.Println("Database opened successfully")
 	return db, nil
 }
@@ -279,8 +304,46 @@ func StartBackupRoutine(db *sql.DB, mutex *sync.Mutex) {
             // Разблокируем базу данных
             mutex.Unlock()
 
-            // Задержка выполнения на 24 часа
-            log.Println("Ожидание 24 часов перед следующим резервным копированием...")
+            // Задержка выполнения на 1 час
+            log.Println("Ожидание 1 час перед следующим резервным копированием...")
+        }
+    }()
+}
+
+// CheckPenLength проверяет значения pen_length и пишет в лог, если больше половины значений равны 5
+func CheckPenLength(db *sql.DB) {
+    go func() {
+        ticker := time.NewTicker(5 * time.Minute)
+        defer ticker.Stop()
+        for {
+            <-ticker.C
+            rows, err := db.Query("SELECT pen_length FROM pens")
+            if err != nil {
+                log.Printf("Failed to query pen_length: %v", err)
+                continue
+            }
+
+            var count, count5 int
+            for rows.Next() {
+                var penLength int
+                if err := rows.Scan(&penLength); err != nil {
+                    log.Printf("Failed to scan pen_length: %v", err)
+                    continue
+                }
+                count++
+                if penLength == 5 {
+                    count5++
+                }
+            }
+
+            if err := rows.Err(); err != nil {
+                log.Printf("Error iterating rows: %v", err)
+                continue
+            }
+
+            if count > 0 && count5 > count/2 {
+                log.Println("База обнулилась: больше половины значений pen_length равны 5")
+            }
         }
     }()
 }

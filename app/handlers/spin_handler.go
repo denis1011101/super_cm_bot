@@ -70,7 +70,7 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		}
 	case "RESET":
 		result.Size = -pen.Size
-		responseText = "Теперь ты просто . Твой сайз: zero см"
+		responseText = "Теперь ты просто пезда. Твой сайз: zero см"
 	case "ZERO":
 		responseText = "Чеееел... у тебя 0 см прибавилось. Твой сайз: %d см"
 	}

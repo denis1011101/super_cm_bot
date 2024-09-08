@@ -27,16 +27,6 @@ func main() {
 		log.Fatalf("Failed to create log directory: %v", err)
 	}
 
-	// Открываем файл для записи логов
-	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
-	}
-	defer logFile.Close()
-
-	// Настраиваем логгер для записи в файл
-	log.SetOutput(logFile)
-
 	// Настройка ротации логов
 	log.SetOutput(&lumberjack.Logger{
 		Filename:   logFilePath,
@@ -45,6 +35,20 @@ func main() {
 		MaxAge:     28, // Максимальное количество дней хранения старых файлов
 		Compress:   true, // Сжатие старых файлов
 	})
+
+    // Настройка логирования SQLite
+    os.Setenv("SQLITE_TRACE", "1")
+    os.Setenv("SQLITE_TRACE_FILE", logFilePath)
+
+	// Открываем файл для записи логов
+	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+
+    // Настраиваем логгер для записи в файл
+    log.SetOutput(logFile)
 
 	err = godotenv.Load()
 	if err != nil {
@@ -97,6 +101,8 @@ func main() {
 
 	// Вызов функции резервного копирования в основном потоке
 	app.StartBackupRoutine(db, mutex)
+
+	app.CheckPenLength(db)
 
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
