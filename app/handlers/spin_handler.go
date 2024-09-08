@@ -13,7 +13,9 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
 
-	// Получение текущего размера пениса пользователя из базы данных
+    log.Printf("HandleSpin called with userID: %d, chatID: %d", userID, chatID)
+
+	// Получение текущего размера  пользователя из базы данных
 	pen, err := app.GetUserPen(db, userID, chatID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -34,10 +36,12 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 
 	// Выполнение спина
 	result := app.SpinPenSize(pen)
+	log.Printf("Spin result: %+v", result)
 
-	// Обновление размера пениса и времени последнего обновления в базе данных
+	// Обновление размера  и времени последнего обновления в базе данных
 	newSize := pen.Size + result.Size
 	app.UpdateUserPen(db, userID, chatID, newSize)
+	log.Printf("Updated pen size: %d", newSize)
 
 	//Отправка ответного сообщения
 	var responseText string
@@ -66,14 +70,14 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		case -4:
 			responseText = fmt.Sprintf("-4 не переживай до свадьбы отрастет 🤥 Твой сайз: %d см", newSize)
 		case -5:
-			responseText = fmt.Sprintf("У тебя -5 петушара🐓 И я не шучу. Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("У тебя -5 петушара И я не шучу. Твой сайз: %d см", newSize)
 		}
 	case "RESET":
-		result.Size = -pen.Size
-		responseText = "Теперь ты просто пезда. Твой сайз: zero см"
+		responseText = fmt.Sprintf("Теперь ты просто пезда. Твой сайз: %d см", newSize)
 	case "ZERO":
 		responseText = "Чеееел... у тебя 0 см прибавилось. Твой сайз: %d см"
 	}
 
+	log.Printf("Response text: %s", responseText)
 	app.SendMessage(chatID, responseText, bot, update.Message.MessageID)
 }
