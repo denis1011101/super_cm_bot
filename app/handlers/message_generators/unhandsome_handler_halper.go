@@ -1,4 +1,4 @@
-package handlers
+package messagegenerators
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"math/rand"
 )
 
-func firstSet(username string, diffSize int, newSize int) string {
+func firstUnhandsomeSet(username string, diffSize int, newSize int) string {
     messages := []string{
         "Разворачиваю сервис по поиску пидорасов ",
         "ping global.pidoras.com...",
@@ -19,7 +19,7 @@ func firstSet(username string, diffSize int, newSize int) string {
     return text
 }
 
-func secondSet(username string, diffSize int, newSize int) string {
+func secondUnhandsomeSet(username string, diffSize int, newSize int) string {
     messages := []string{
         "Начинаю расследование️ 🕵️‍♂️",
         "Отправляю запрос в антипидорскую службу 📩",
@@ -31,7 +31,7 @@ func secondSet(username string, diffSize int, newSize int) string {
 	return text
 }
 
-func thirdSet(username string, diffSize int, newSize int) string {
+func thirdUnhandsomeSet(username string, diffSize int, newSize int) string {
     messages := []string{
         "Сча поищу.",
         "Первым делом зайду в бар ",
@@ -44,18 +44,18 @@ func thirdSet(username string, diffSize int, newSize int) string {
     return text
 }
 
-var setsFabric []func(username string, diffSize int, newSize int) string = createSetsFabric()
+var unhandsomeMessageSets []func(username string, diffSize int, newSize int) string = unhandsomeSetsFabric()
 
-func createSetsFabric() []func(username string, diffSize int, newSize int) string {
+func unhandsomeSetsFabric() []func(username string, diffSize int, newSize int) string {
     return []func(username string, diffSize int, newSize int) string {
-        firstSet,
-        secondSet,
-        thirdSet,
+        firstUnhandsomeSet,
+        secondUnhandsomeSet,
+        thirdUnhandsomeSet,
     }
 }
 
-func getRandomUnhandsomeMessage(username string, diffSize int, newSize int) string {
+func GetRandomUnhandsomeMessage(username string, diffSize int, newSize int) string {
 	spin := rand.Intn(4);
-	message := setsFabric[spin](username, diffSize, newSize)
+	message := unhandsomeMessageSets[spin](username, diffSize, newSize)
 	return message
 }

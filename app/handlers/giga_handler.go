@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 
 	"github.com/denis1011101/super_cum_bot/app"
+	messagegenerators "github.com/denis1011101/super_cum_bot/app/handlers/message_generators"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -63,6 +63,9 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	// Обновление значения члена и времени последнего обновления у выигравшего участника
 	app.UpdateGiga(db, newSize, randomMember.ID, chatID)
 
+	// Генерируем сообщени для чата
+	message := messagegenerators.GetRandomGigaMessage(randomMember.Name, result.Size, newSize);
+
 	// Отправка сообщения с именем выбранного "красавчика"
-	app.SendMessage(chatID, fmt.Sprintf("Воу воу воу паприветсвуйте хасанчика @%s!🔥Твой член стал длиннее на %d см. Теперь он %d см.", randomMember.Name, result.Size, newSize), bot, update.Message.MessageID)
+	app.SendMessage(chatID, message, bot, update.Message.MessageID)
 }

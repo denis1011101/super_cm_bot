@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 
 	"github.com/denis1011101/super_cum_bot/app"
+	messagegenerators "github.com/denis1011101/super_cum_bot/app/handlers/message_generators"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -64,7 +64,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID)
 
 	// Генерируем сообщение для чата
-	message := getRandomUnhandsomeMessage(chatID, randomMember.Name, result.Size, newSize);
+	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize);
 
 	// Отправка сообщения с именем выбранного "антикрасавчика"
 	app.SendMessage(chatID, message, bot, update.Message.MessageID)
