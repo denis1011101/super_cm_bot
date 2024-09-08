@@ -63,6 +63,9 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	// Обновление значения у выигравшего участника и времени последнего обновления у всех участников
 	app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID)
 
+	// Генерируем сообщение для чата
+	message := getRandomUnhandsomeMessage(chatID, randomMember.Name, result.Size, newSize);
+
 	// Отправка сообщения с именем выбранного "антикрасавчика"
-	app.SendMessage(chatID, fmt.Sprintf("Пусть пидором будет @%s! Твой член стал короче на %d см. Теперь он %d см.", randomMember.Name, result.Size, newSize), bot, update.Message.MessageID)
+	app.SendMessage(chatID, message, bot, update.Message.MessageID)
 }
