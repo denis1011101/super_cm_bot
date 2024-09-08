@@ -55,7 +55,7 @@ func unhandsomeSetsFabric() []func(username string, diffSize int, newSize int) s
 }
 
 func GetRandomUnhandsomeMessage(username string, diffSize int, newSize int) string {
-	spin := rand.Intn(4);
+	spin := rand.Intn(2);
 	message := unhandsomeMessageSets[spin](username, diffSize, newSize)
 	return message
 }

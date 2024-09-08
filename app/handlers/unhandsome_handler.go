@@ -42,7 +42,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	// }
 
 	// Выбор случайного участника
-	randomMember := app.SpinunhandsomeOrGiga(members)
+	randomMember := app.SelectRandomMember(members)
 
 	// Получение текущего размера пениса выбранного участника
 	pen, err := app.GetUserPen(db, randomMember.ID, chatID)
@@ -64,7 +64,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID)
 
 	// Генерируем сообщение для чата
-	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize);
+	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize)
 
 	// Отправка сообщения с именем выбранного "антикрасавчика"
 	app.SendMessage(chatID, message, bot, update.Message.MessageID)

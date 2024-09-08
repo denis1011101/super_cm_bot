@@ -42,7 +42,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	// Выбор случайного участника
-	randomMember := app.SpinunhandsomeOrGiga(members)
+	randomMember := app.SelectRandomMember(members)
 
 	// Получение текущего размера пениса выбранного участника
 	pen, err := app.GetUserPen(db, randomMember.ID, chatID)
@@ -64,7 +64,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	app.UpdateGiga(db, newSize, randomMember.ID, chatID)
 
 	// Генерируем сообщени для чата
-	message := messagegenerators.GetRandomGigaMessage(randomMember.Name, result.Size, newSize);
+	message := messagegenerators.GetRandomGigaMessage(randomMember.Name, result.Size, newSize)
 
 	// Отправка сообщения с именем выбранного "красавчика"
 	app.SendMessage(chatID, message, bot, update.Message.MessageID)

@@ -54,7 +54,7 @@ func gigaSetsFabric() []func(username string, diffSize int, newSize int) string 
 }
 
 func GetRandomGigaMessage(username string, diffSize int, newSize int) string {
-	spin := rand.Intn(4);
+	spin := rand.Intn(2);
 	message := gigaMesasgeSets[spin](username, diffSize, newSize)
 	return message
 }
