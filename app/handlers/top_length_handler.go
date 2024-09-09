@@ -12,9 +12,23 @@ import (
 
 func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	chatID := update.Message.Chat.ID
-
-	// Выполнение SQL-запроса для получения топа по длине
-	rows, err := db.Query("SELECT pen_name, pen_length FROM pens WHERE tg_chat_id = ? ORDER BY pen_length DESC LIMIT 10", chatID)
+	
+	// Подготовка запроса для получения топа по длине
+	stmt, err := db.Prepare(`
+		SELECT pen_name, pen_length 
+		FROM pens 
+		WHERE tg_chat_id = ? 
+		ORDER BY pen_length DESC 
+		LIMIT 10
+	`)
+	if err != nil {
+		log.Printf("Error preparing query statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+	
+	// Выполнение подготовленного запроса с параметрами
+	rows, err := stmt.Query(chatID)
 	if err != nil {
 		log.Printf("Error querying top length: %v", err)
 		return

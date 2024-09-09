@@ -13,9 +13,23 @@ import (
 // TopGiga обрабатывает команду "топ гигачад"
 func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	chatID := update.Message.Chat.ID
-
-	// Выполнение SQL-запроса для получения топа по гигачатам
-	rows, err := db.Query("SELECT pen_name, handsome_count FROM pens WHERE tg_chat_id = ? ORDER BY handsome_count DESC LIMIT 10", chatID)
+	
+	// Подготовка запроса для получения топа по гигачатам
+	stmt, err := db.Prepare(`
+		SELECT pen_name, handsome_count 
+		FROM pens 
+		WHERE tg_chat_id = ? 
+		ORDER BY handsome_count DESC 
+		LIMIT 10
+	`)
+	if err != nil {
+		log.Printf("Error preparing query statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+	
+	// Выполнение подготовленного запроса с параметрами
+	rows, err := stmt.Query(chatID)
 	if err != nil {
 		log.Printf("Error querying top gigachat: %v", err)
 		return

@@ -2,13 +2,12 @@ package app
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"os"
-    "io"
+	"path/filepath"
+	"sync"
 	"time"
-    "path/filepath"
-	"fmt"
-    "sync"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -17,29 +16,29 @@ const sqliteTimestampLayout = "2006-01-02 15:04:05Z07:00"
 
 // InitDB инициализирует базу данных
 func InitDB() (*sql.DB, error) {
-    dbDir := "./data"
+	dbDir := "./data"
 
-    // Проверка, существует ли директория базы данных
-    if _, err := os.Stat(dbDir); os.IsNotExist(err) {
-        // Директория не существует, создаём её
-        err = os.MkdirAll(dbDir, os.ModePerm)
-        if err != nil {
-            log.Printf("Error creating directory: %v", err)
-            return nil, err
-        }
-    }
+	// Проверка, существует ли директория базы данных
+	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
+		// Директория не существует, создаём её
+		err = os.MkdirAll(dbDir, os.ModePerm)
+		if err != nil {
+			log.Printf("Error creating directory: %v", err)
+			return nil, err
+		}
+	}
 
 	dbPath := "./data/pens.db"
 
-    // Проверка, существует ли директория базы данных
-    if _, err := os.Stat(dbDir); os.IsNotExist(err) {
-        // Директория не существует, создаём её
-        err = os.MkdirAll(dbDir, os.ModePerm)
-        if err != nil {
-            log.Printf("Error creating directory: %v", err)
-            return nil, err
-        }
-    }
+	// Проверка, существует ли директория базы данных
+	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
+		// Директория не существует, создаём её
+		err = os.MkdirAll(dbDir, os.ModePerm)
+		if err != nil {
+			log.Printf("Error creating directory: %v", err)
+			return nil, err
+		}
+	}
 
 	// Проверка, существует ли файл базы данных
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
@@ -70,7 +69,25 @@ func InitDB() (*sql.DB, error) {
 			return nil, err
 		}
 
-		log.Println("Database and table created successfully")
+		// Создание индекса для pen_length
+		createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
+		_, err = db.Exec(createIndexQuery)
+		if err != nil {
+			db.Close() // Закрываем базу данных при ошибке
+			log.Printf("Error creating index: %v", err)
+			return nil, err
+		}
+
+        // Создание индекса для tg_pen_id
+        createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
+        _, err = db.Exec(createIndexQuery)
+        if err != nil {
+            db.Close() // Закрываем базу данных при ошибке
+            log.Printf("Error creating index: %v", err)
+            return nil, err
+        }
+
+		log.Println("Database and table and index created successfully")
 		return db, nil
 	}
 
@@ -81,30 +98,73 @@ func InitDB() (*sql.DB, error) {
 		return nil, err
 	}
 
-    // Увеличение лимитов SQLite
-    _, err = db.Exec("PRAGMA cache_size = 2000;") // Примерно 8 МБ (2000 * 4 КБ)
-    if err != nil {
-        log.Printf("Error setting cache_size: %v", err)
-        return nil, err
-    }
+	// Создание индекса для pen_length, если он еще не существует
+	createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
+	_, err = db.Exec(createIndexQuery)
+	if err != nil {
+		log.Printf("Error creating index: %v", err)
+		return nil, err
+	}
 
-    _, err = db.Exec("PRAGMA temp_store = MEMORY;")
-    if err != nil {
-        log.Printf("Error setting temp_store: %v", err)
-        return nil, err
-    }
+	// Создание индекса для tg_pen_id
+	createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
+	_, err = db.Exec(createIndexQuery)
+	if err != nil {
+		db.Close() // Закрываем базу данных при ошибке
+		log.Printf("Error creating index: %v", err)
+		return nil, err
+	}
 
-    _, err = db.Exec("PRAGMA mmap_size = 67108864;") // 64 МБ
-    if err != nil {
-        log.Printf("Error setting mmap_size: %v", err)
-        return nil, err
-    }
+	log.Println("Index created successfully in existing database")
 
-    _, err = db.Exec("PRAGMA journal_mode = WAL;")
-    if err != nil {
-        log.Printf("Error setting journal_mode: %v", err)
-        return nil, err
-    }
+	// Увеличение размера кэша
+	_, err = db.Exec("PRAGMA cache_size = 2000;") // Примерно 8 МБ (2000 * 4 КБ)
+	if err != nil {
+		log.Printf("Error setting cache_size: %v", err)
+		return nil, err
+	}
+
+	// Увеличение размера стека
+	_, err = db.Exec("PRAGMA temp_store = MEMORY;")
+	if err != nil {
+		log.Printf("Error setting temp_store: %v", err)
+		return nil, err
+	}
+
+	// Увеличение размера mmap
+	_, err = db.Exec("PRAGMA mmap_size = 67108864;") // 64 МБ
+	if err != nil {
+		log.Printf("Error setting mmap_size: %v", err)
+		return nil, err
+	}
+
+	// Увеличение размера журнала
+	_, err = db.Exec("PRAGMA journal_size_limit = 10485760;") // 10 МБ
+	if err != nil {
+		log.Printf("Error setting journal_size_limit: %v", err)
+		return nil, err
+	}
+
+	// Увеличение размера страницы
+	_, err = db.Exec("PRAGMA page_size = 8192;") // 8 КБ
+	if err != nil {
+		log.Printf("Error setting page_size: %v", err)
+		return nil, err
+	}
+
+	// Увеличение размера колонки длины
+	_, err = db.Exec("PRAGMA max_column_length = 1000000;") // 1 МБ
+	if err != nil {
+		log.Printf("Error setting max_column_length: %v", err)
+		return nil, err
+	}
+
+	// Установка режима журнала WAL
+	_, err = db.Exec("PRAGMA journal_mode = WAL;")
+	if err != nil {
+		log.Printf("Error setting journal_mode: %v", err)
+		return nil, err
+	}
 
 	log.Println("Database opened successfully")
 	return db, nil
@@ -217,7 +277,7 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 }
 
 func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
-    _, err := db.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1, handsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
+	_, err := db.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1, handsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
 	if err != nil {
 		log.Printf("Error updating giga count and last_update_at : %v", err)
 	} else {
@@ -227,55 +287,48 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 
 func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
 	_, err := db.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1, unhandsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
-    if err != nil {
-        log.Printf("Error updating unhandsome count and last_update_at: %v", err)
-    } else {
-        log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
-    }
+	if err != nil {
+		log.Printf("Error updating unhandsome count and last_update_at: %v", err)
+	} else {
+		log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+	}
 }
 
 // backupDatabase создает резервную копию базы данных SQLite
 func backupDatabase() error {
-    // Определение пути к файлу резервной копии в корневом каталоге
-    source := "./data/pens.db"
-    backupDir := "backups"
+	// Определение пути к файлу резервной копии в корневом каталоге
+	source := "./data/pens.db"
+	backupDir := "backups"
 
-    // Генерация уникального имени файла резервной копии на основе текущей даты и времени
-    timestamp := time.Now().Format("20060102_150405")
-    backupFile := filepath.Join(backupDir, "database_backup_"+timestamp+".db")
+	// Генерация уникального имени файла резервной копии на основе текущей даты и времени
+	timestamp := time.Now().Format("20060102_150405")
+	backupFile := filepath.Join(backupDir, "database_backup_"+timestamp+".db")
 
-    // Создание директории для резервной копии, если она не существует
-    if _, err := os.Stat(backupDir); os.IsNotExist(err) {
-        if err := os.MkdirAll(backupDir, 0755); err != nil {
-            log.Fatalf("Cannot create backup directory: %s, error: %v", backupDir, err)
+	// Создание директории для резервной копии, если она не существует
+	if _, err := os.Stat(backupDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(backupDir, 0755); err != nil {
+			log.Fatalf("Cannot create backup directory: %s, error: %v", backupDir, err)
 			return err
-        }
-    }
+		}
+	}
 
-    // Проверка существования файла базы данных
-    if _, err := os.Stat(source); os.IsNotExist(err) {
-        log.Fatalf("Database file does not exist: %s", source)
+	// Проверка существования файла базы данных
+	if _, err := os.Stat(source); os.IsNotExist(err) {
+		log.Fatalf("Database file does not exist: %s", source)
 		return fmt.Errorf("database file does not exist: %s", source)
-    }
+	}
 
-    // Открываем исходный файл базы данных для чтения
-    srcFile, err := os.Open(source)
-    if err != nil {
-        return err
-    }
-    defer srcFile.Close() // Закрываем файл после завершения функции
+	// Открытие исходной базы данных
+	srcDB, err := sql.Open("sqlite3", source)
+	if err != nil {
+		return fmt.Errorf("failed to open source database: %v", err)
+	}
+	defer srcDB.Close()
 
-    // Создаем файл назначения для записи резервной копии
-    dstFile, err := os.Create(backupFile)
+    // Выполнение резервного копирования с использованием команды VACUUM INTO
+    _, err = srcDB.Exec(fmt.Sprintf("VACUUM INTO '%s';", backupFile))
     if err != nil {
-        return err
-    }
-    defer dstFile.Close() // Закрываем файл после завершения функции
-
-    // Копируем содержимое исходного файла в файл назначения
-    _, err = io.Copy(dstFile, srcFile)
-    if err != nil {
-        return err
+        return fmt.Errorf("failed to backup database: %v", err)
     }
 
     // Вывод сообщения об успешном создании резервной копии
@@ -285,65 +338,70 @@ func backupDatabase() error {
 
 // StartBackupRoutine запускает процесс резервного копирования
 func StartBackupRoutine(db *sql.DB, mutex *sync.Mutex) {
-    go func() {
-        // Настройка таймера для выполнения раз в день
-        ticker := time.NewTicker(1 * time.Hour)
-        defer ticker.Stop()
+	go func() {
+		// Настройка таймера для выполнения раз в день
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
 
-        for range ticker.C {
-            // Блокируем базу данных
-            mutex.Lock()
+		for range ticker.C {
+			// Блокируем базу данных
+			mutex.Lock()
 
-            // Выполнение резервного копирования
-            if err := backupDatabase(); err != nil {
-                log.Printf("Ошибка при резервном копировании базы данных: %v", err)
-            } else {
-                log.Println("Резервное копирование завершено успешно")
-            }
+			// Выполнение резервного копирования
+			if err := backupDatabase(); err != nil {
+				log.Printf("Ошибка при резервном копировании базы данных: %v", err)
+			} else {
+				log.Println("Резервное копирование завершено успешно")
+			}
 
-            // Разблокируем базу данных
-            mutex.Unlock()
+			// Разблокируем базу данных
+			mutex.Unlock()
 
-            // Задержка выполнения на 1 час
-            log.Println("Ожидание 1 час перед следующим резервным копированием...")
-        }
-    }()
+			// Задержка выполнения на 1 час
+			log.Println("Ожидание 1 час перед следующим резервным копированием...")
+		}
+	}()
 }
 
 // CheckPenLength проверяет значения pen_length и пишет в лог, если больше половины значений равны 5
 func CheckPenLength(db *sql.DB) {
-    go func() {
-        ticker := time.NewTicker(5 * time.Minute)
-        defer ticker.Stop()
-        for {
-            <-ticker.C
-            rows, err := db.Query("SELECT pen_length FROM pens")
-            if err != nil {
-                log.Printf("Failed to query pen_length: %v", err)
-                continue
-            }
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			var totalCount, count5 int
+			err := db.QueryRow(`
+                SELECT 
+                    COUNT(*) AS total_count,
+                    SUM(CASE WHEN pen_length = 5 THEN 1 ELSE 0 END) AS count5
+                FROM pens
+            `).Scan(&totalCount, &count5)
+			if err != nil {
+				log.Printf("Failed to query pen_length: %v", err)
+				continue
+			}
 
-            var count, count5 int
-            for rows.Next() {
-                var penLength int
-                if err := rows.Scan(&penLength); err != nil {
-                    log.Printf("Failed to scan pen_length: %v", err)
-                    continue
-                }
-                count++
-                if penLength == 5 {
-                    count5++
-                }
-            }
+			if totalCount > 0 && count5 > totalCount/2 {
+				log.Println("База обнулилась: больше половины значений pen_length равны 5")
+			}
+		}
+	}()
+}
 
-            if err := rows.Err(); err != nil {
-                log.Printf("Error iterating rows: %v", err)
-                continue
-            }
-
-            if count > 0 && count5 > count/2 {
-                log.Println("База обнулилась: больше половины значений pen_length равны 5")
-            }
-        }
-    }()
+// Check database integrity and log the result
+func CheckIntegrity(db *sql.DB) {
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			<-ticker.C
+			_, err := db.Exec("PRAGMA integrity_check;")
+			if err != nil {
+				log.Printf("Integrity check FAILED!!!!: %v", err)
+			} else {
+				log.Println("Integrity check passed")
+			}
+		}
+	}()
 }

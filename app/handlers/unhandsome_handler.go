@@ -36,10 +36,10 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		log.Printf("Pen Name: %v", penName)
 	}
 
-	// if len(members) <= 1 {
-	// 	app.SendMessage(chatID, "Недостаток пенисов в чате!", bot, update.Message.MessageID)
-	// 	return
-	// }
+	if len(members) <= 1 {
+		app.SendMessage(chatID, "Недостаточно пенисов в чате!", bot, update.Message.MessageID)
+		return
+	}
 
 	// Выбор случайного участника
 	randomMember := app.SpinunhandsomeOrGiga(members)
@@ -48,10 +48,12 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	pen, err := app.GetUserPen(db, randomMember.ID, chatID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			log.Printf("No pen size found for tg_pen_id: %d in chat_id: %d", randomMember.ID, chatID)
-		} else {
-			log.Printf("Error getting current pen size: %v", err)
+			// Регистрация пользователя, если он не найден в базе данных
+			log.Printf("User not found in database, registering: %v", err)
+			registerBot(update, bot, db, true)
+			return
 		}
+		log.Printf("Error querying pen size: %v, pen: %+v", err, pen)
 		return
 	}
 	log.Printf("Current pen size for tg_pen_id %d in chat_id %d: %d", randomMember.ID, chatID, pen.Size)

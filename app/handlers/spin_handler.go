@@ -20,10 +20,11 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// Регистрация пользователя, если он не найден в базе данных
+			log.Printf("User not found in database, registering: %v", err)
 			registerBot(update, bot, db, true)
 			return
 		}
-		log.Printf("Error querying pen size: %v", err)
+		log.Printf("Error querying pen size: %v, pen: %+v", err, pen)
 		return
 	}
 
@@ -75,7 +76,7 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	case "RESET":
 		responseText = fmt.Sprintf("Теперь ты просто пезда. Твой сайз: %d см", newSize)
 	case "ZERO":
-		responseText = "Чеееел... у тебя 0 см прибавилось. Твой сайз: %d см"
+		responseText = fmt.Sprintf("Чеееел... у тебя 0 см прибавилось. Твой сайз: %d см", newSize)
 	}
 
 	log.Printf("Response text: %s", responseText)
