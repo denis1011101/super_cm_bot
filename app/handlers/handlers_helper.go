@@ -47,17 +47,10 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 	}
 	defer stmt.Close()
 	
-	// Выполнение подготовленного запроса с параметрами
+	// Выполнение подготовленного запроса с параметрами и добавление 5 см к размеру пениса
 	_, err = stmt.Exec(userName, userID, chatID, 5)
 	if err != nil {
 		log.Printf("Error inserting user into database: %v", err)
-		return
-	}
-
-	// Обновление размера пениса
-	err = app.UpdatePenSize(db, chatID, 5)
-	if err != nil {
-		log.Printf("Error updating pen size: %v", err)
 		return
 	}
 

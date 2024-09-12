@@ -117,48 +117,6 @@ func InitDB() (*sql.DB, error) {
 
 	log.Println("Index created successfully in existing database")
 
-	// Увеличение размера кэша
-	_, err = db.Exec("PRAGMA cache_size = 2000;") // Примерно 8 МБ (2000 * 4 КБ)
-	if err != nil {
-		log.Printf("Error setting cache_size: %v", err)
-		return nil, err
-	}
-
-	// Увеличение размера стека
-	_, err = db.Exec("PRAGMA temp_store = MEMORY;")
-	if err != nil {
-		log.Printf("Error setting temp_store: %v", err)
-		return nil, err
-	}
-
-	// Увеличение размера mmap
-	_, err = db.Exec("PRAGMA mmap_size = 67108864;") // 64 МБ
-	if err != nil {
-		log.Printf("Error setting mmap_size: %v", err)
-		return nil, err
-	}
-
-	// Увеличение размера журнала
-	_, err = db.Exec("PRAGMA journal_size_limit = 10485760;") // 10 МБ
-	if err != nil {
-		log.Printf("Error setting journal_size_limit: %v", err)
-		return nil, err
-	}
-
-	// Увеличение размера страницы
-	_, err = db.Exec("PRAGMA page_size = 8192;") // 8 КБ
-	if err != nil {
-		log.Printf("Error setting page_size: %v", err)
-		return nil, err
-	}
-
-	// Увеличение размера колонки длины
-	_, err = db.Exec("PRAGMA max_column_length = 1000000;") // 1 МБ
-	if err != nil {
-		log.Printf("Error setting max_column_length: %v", err)
-		return nil, err
-	}
-
 	// Установка режима журнала WAL
 	_, err = db.Exec("PRAGMA journal_mode = WAL;")
 	if err != nil {
@@ -168,17 +126,6 @@ func InitDB() (*sql.DB, error) {
 
 	log.Println("Database opened successfully")
 	return db, nil
-}
-
-// UpdatePenSize обновляет размер пениса в базе данных
-func UpdatePenSize(db *sql.DB, tgChatID int64, newSize int) error {
-	_, err := db.Exec(`UPDATE pens SET pen_length = ? WHERE tg_chat_id = ?`, newSize, tgChatID)
-	if err != nil {
-		log.Printf("Error updating pen size: %v", err)
-		return err
-	}
-	log.Printf("Pen size updated successfully for tg_chat_id: %d, new size: %d", tgChatID, newSize)
-	return nil
 }
 
 // GetUserIDByUsername получает ID пользователя по его username
@@ -212,6 +159,7 @@ func GetPenNames(db *sql.DB, chatID int64) ([]Member, error) {
 	return members, nil
 }
 
+// GetUserPen получает значения pen_length и pen_last_update_at из базы данных
 func GetUserPen(db *sql.DB, userID int64, chatID int64) (Pen, error) {
 	var currentSize int
 	var lastUpdate sql.NullTime
@@ -225,6 +173,7 @@ func GetUserPen(db *sql.DB, userID int64, chatID int64) (Pen, error) {
 	return Pen{currentSize, lastUpdate.Time}, err
 }
 
+// UpdateUserPen обновляет значения pen_length и pen_last_update_at в базе данных
 func UpdateUserPen(db *sql.DB, userID int64, chatID int64, newSize int) {
 	_, err := db.Exec("UPDATE pens SET pen_length = ?, pen_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
 	if err != nil {
@@ -234,6 +183,7 @@ func UpdateUserPen(db *sql.DB, userID int64, chatID int64, newSize int) {
 	}
 }
 
+// GetGigaLastUpdateTime получает время последнего обновления для команды /giga
 func GetGigaLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	var lastUpdateText sql.NullString
 	err := db.QueryRow("SELECT MAX(handsome_last_update_at) FROM pens WHERE tg_chat_id = ?", chatID).Scan(&lastUpdateText)
@@ -255,6 +205,7 @@ func GetGigaLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	return time.Time{}, nil
 }
 
+// GetUnhandsomeLastUpdateTime получает время последнего обновления для команды /unhandsome
 func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	var lastUpdateText sql.NullString
 	err := db.QueryRow("SELECT MAX(unhandsome_last_update_at) FROM pens WHERE tg_chat_id = ?", chatID).Scan(&lastUpdateText)
@@ -276,6 +227,7 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	return time.Time{}, nil
 }
 
+// UpdateGiga обновляет значения handsome_count и handsome_last_update_at в базе данных
 func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 	_, err := db.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1, handsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
 	if err != nil {
@@ -285,6 +237,7 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 	}
 }
 
+// UpdateUnhandsome обновляет значения unhandsome_count и unhandsome_last_update_at в базе данных
 func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
 	_, err := db.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1, unhandsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
 	if err != nil {
@@ -404,4 +357,15 @@ func CheckIntegrity(db *sql.DB) {
 			}
 		}
 	}()
+}
+
+// Проверка наличия пользователя в базе данных
+func UserExists(db *sql.DB, userID int64, chatID int64) (bool, error) {
+    var exists bool
+    query := `SELECT EXISTS(SELECT 1 FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?)`
+    err := db.QueryRow(query, userID, chatID).Scan(&exists)
+    if err != nil {
+        return false, err
+    }
+    return exists, nil
 }
