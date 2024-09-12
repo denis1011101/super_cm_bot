@@ -10,10 +10,10 @@ func firstUnhandsomeSet(username string, diffSize int, newSize int) string {
     messages := []string{
         "Разворачиваю сервис по поиску пидорасов ",
         "ping global.pidoras.com...",
-        "pong 64 bytes from zebal pingovat\"...",
+        "pong 64 bytes from \"zebal pingovat\"...",
         "Делаю запрос на поиск",
         "О, что-то нашлось...",
-        fmt.Sprintf("Ага пидор дня @%s! Твой хуй стал короче на %b см. Теперь он %b см.", username, diffSize, newSize),
+        fmt.Sprintf("Ага пидор дня @%s! Твой хуй стал короче на %d см. Теперь он %d см.", username, diffSize, newSize),
     }
     text := strings.Join(messages, "\n")
     return text
@@ -25,7 +25,7 @@ func secondUnhandsomeSet(username string, diffSize int, newSize int) string {
         "Отправляю запрос в антипидорскую службу 📩",
         "Уточняю координаты объекта 📍",
         "Избавляюсь от свидетелей 🥷",
-        fmt.Sprintf("Попавший пидор. Мой попу @%s. Твой хуй стал короче на %b см. Теперь он %b см.", username, diffSize, newSize),
+        fmt.Sprintf("Попавший пидор. Мой попу @%s. Твой хуй стал короче на %d см. Теперь он %d см.", username, diffSize, newSize),
     }
     text := strings.Join(messages, "\n")
 	return text
@@ -38,7 +38,7 @@ func thirdUnhandsomeSet(username string, diffSize int, newSize int) string {
         "Теперь погнал в клуб ",
         "Ооо тут ещё казино есть ",
         "Ёбаный рот этого казино... А? Что? Пидора надо найти? Сча.",
-        fmt.Sprintf("Пусть пидором будет @%s. Твой хуй стал короче на %b см. Теперь он %b см.", username, diffSize, newSize),
+        fmt.Sprintf("Пусть пидором будет @%s. Твой хуй стал короче на %d см. Теперь он %d см.", username, diffSize, newSize),
     }
     text := strings.Join(messages, "\n")
     return text
