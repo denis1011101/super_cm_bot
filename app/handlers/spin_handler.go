@@ -58,15 +58,15 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	case "DIFF":
 		switch result.Size {
 		case -1:
-			responseText = fmt.Sprintf("-1 ты чё пидр? Да я шучу. Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-1 ты чё, пидр? Да я шучу. Твой сайз: %d см", newSize)
 		case -2:
-			responseText = fmt.Sprintf("-2 не велика потеря бро 🥸 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-2 не велика потеря, бро 🥸 Твой сайз: %d см", newSize)
 		case -3:
 			responseText = fmt.Sprintf("-3 это хуже чем +1 🤡 Твой сайз: %d см", newSize)
 		case -4:
-			responseText = fmt.Sprintf("-4 не переживай до свадьбы отрастет 🤥 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-4 не переживай, до свадьбы отрастет 🤥 Твой сайз: %d см", newSize)
 		case -5:
-			responseText = fmt.Sprintf("У тебя -5 петушара🐓 И я не шучу. Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("У тебя -5, петушара🐓 И я не шучу. Твой сайз: %d см", newSize)
 		}
 	case "RESET":
 		result.Size = -pen.Size
