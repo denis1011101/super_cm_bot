@@ -25,6 +25,14 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		return
 	}
 
+	// Проводим ролл на пропуск выбора гигачада дня
+	if app.SpinSkipAction() {
+		app.UpdateGigaLastUpdate(db, chatID)
+		message := messagegenerators.GetSkipGigaMessage()
+		app.SendMessage(chatID, message, bot, update.Message.MessageID)
+		return
+	}
+
 	// Преобразование penNames в список объектов Member
 	members, err := app.GetPenNames(db, chatID)
 	if err != nil {

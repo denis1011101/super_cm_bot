@@ -217,21 +217,88 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 }
 
 func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
-    _, err := db.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1, handsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
+	tx, err := db.Begin()
 	if err != nil {
-		log.Printf("Error updating giga count and last_update_at : %v", err)
+		log.Printf("Error starting transaction: %v", err)
+		return
+	}
+
+	_, err = tx.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
+	if err != nil {
+		log.Printf("Error updating giga count: %v", err)
+        tx.Rollback()
 	} else {
-		log.Printf("Successfully updated giga count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+		log.Printf("Successfully updated giga count for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+	}
+
+	// Обновляем last_update
+	err = UpdateGigaLastUpdate(tx, chatID)
+	if err != nil {
+		return
+	}
+
+	// Подтверждаем транзакцию
+    err = tx.Commit();
+	if err != nil {
+		log.Printf("Error committing transaction: %v", err)
+        tx.Rollback()
+	}
+}
+
+func UpdateGigaLastUpdate(db SQLExecutor, chatID int64) error {
+	var err error
+	dbStatement := "UPDATE pens SET handsome_last_update_at = ? WHERE tg_chat_id = ?"
+	_, err = db.Exec(dbStatement, time.Now(), chatID)
+
+	if err != nil {
+		log.Printf("Error updating handsome last_update_at: %v", err)
+		return err
+	} else {
+		log.Printf("Successfully updated handsome last_update_at for chatID: %d,", chatID)
+		return nil
 	}
 }
 
 func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
-	_, err := db.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1, unhandsome_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
+    tx, err := db.Begin()
+	if err != nil {
+		log.Printf("Error starting transaction: %v", err)
+		return
+	}
+	_, err = tx.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
+	if err != nil {
+		log.Printf("Error updating unhandsome count and last_update_at: %v", err)
+        tx.Rollback()
+	} else {
+		log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+	}
+
+    // Обновляем last_update
+	err = UpdateUnhandsomeLastUpdate(tx, chatID)
+	if err != nil {
+		return
+	}
+
+    // Подтверждаем транзакцию
+    err = tx.Commit();
     if err != nil {
-        log.Printf("Error updating unhandsome count and last_update_at: %v", err)
-    } else {
-        log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+        log.Printf("Error committing transaction: %v", err)
+        tx.Rollback()
     }
+}
+
+func UpdateUnhandsomeLastUpdate(db SQLExecutor, chatID int64) error {
+    var err error
+	dbStatement := "UPDATE pens SET unhandsome_last_update_at = ? WHERE tg_chat_id = ?"
+	_, err = db.Exec(dbStatement, time.Now(), chatID)
+
+	if err != nil {
+		log.Printf("Error updating unhandsome last_update_at: %v", err)
+        return err
+	} else {
+		log.Printf("Successfully updated unhandsome last_update_at for chatID: %d,", chatID)
+        return nil
+	}
 }
 
 // backupDatabase создает резервную копию базы данных SQLite
@@ -346,4 +413,10 @@ func CheckPenLength(db *sql.DB) {
             }
         }
     }()
+}
+
+type SQLExecutor interface {
+    Exec(query string, args ...interface{}) (sql.Result, error)
+    Query(query string, args ...interface{}) (*sql.Rows, error)
+    QueryRow(query string, args ...interface{}) *sql.Row
 }

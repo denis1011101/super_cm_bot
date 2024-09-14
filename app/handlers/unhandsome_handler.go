@@ -25,6 +25,14 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		return
 	}
 
+	// Проводим ролл на пропуск выбора пидора дня
+	if app.SpinSkipAction() {
+		app.UpdateUnhandsomeLastUpdate(db, chatID)
+		message := messagegenerators.GetSkipUnhandsomeMessage()
+		app.SendMessage(chatID, message, bot, update.Message.MessageID)
+		return
+	}
+
 	// Преобразование penNames в список объектов Member
 	members, err := app.GetPenNames(db, chatID)
 	if err != nil {

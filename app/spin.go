@@ -122,3 +122,9 @@ func SelectRandomMember(members []Member) Member {
 	selectedMember := members[randomInt/1000000]
 	return selectedMember
 }
+
+// Возвращает true, если действие должно быть пропущено (1% шанс)
+func SpinSkipAction() bool {
+	randomInt := rand.Intn(100)
+	return randomInt > 98
+}

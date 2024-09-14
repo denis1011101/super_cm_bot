@@ -58,3 +58,7 @@ func GetRandomGigaMessage(username string, diffSize int, newSize int) string {
 	message := gigaMesasgeSets[spin](username, diffSize, newSize)
 	return message
 }
+
+func GetSkipGigaMessage() string {
+    return "Я блять тут альфа! +10 000 к моему хую! Так что пошли нахуй 👿"
+}

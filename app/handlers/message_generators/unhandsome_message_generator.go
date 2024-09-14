@@ -59,3 +59,13 @@ func GetRandomUnhandsomeMessage(username string, diffSize int, newSize int) stri
 	message := unhandsomeMessageSets[spin](username, diffSize, newSize)
 	return message
 }
+
+func GetSkipUnhandsomeMessage() string {
+    messages := []string{
+        "Бляяя опять работать...",
+        "Ну давай посмотрим, что у нас тут есть.",
+        "Иди нахуй, сегодня все пидоры.",
+    }
+    text := strings.Join(messages, "\n")
+    return text
+}
