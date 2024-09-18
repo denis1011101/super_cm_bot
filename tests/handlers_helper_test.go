@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 	_ "unsafe"
+	_ "github.com/denis1011101/super_cum_bot/app/handlers"
 )
 
 //go:linkname handlersCheckIsSpinNotLegal github.com/denis1011101/super_cum_bot/app/handlers.checkIsSpinNotLegal
