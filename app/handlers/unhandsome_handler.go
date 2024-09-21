@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 
 	"github.com/denis1011101/super_cum_bot/app"
+	messagegenerators "github.com/denis1011101/super_cum_bot/app/handlers/message_generators"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -22,6 +22,14 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	shouldReturn := checkIsSpinNotLegal(lastUpdate)
 	if shouldReturn {
 		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
+		return
+	}
+
+	// Проводим ролл на пропуск выбора пидора дня
+	if app.SpinSkipAction() {
+		app.UpdateUnhandsomeLastUpdate(db, chatID)
+		message := messagegenerators.GetSkipUnhandsomeMessage()
+		app.SendMessage(chatID, message, bot, update.Message.MessageID)
 		return
 	}
 
@@ -42,7 +50,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	// }
 
 	// Выбор случайного участника
-	randomMember := app.SpinunhandsomeOrGiga(members)
+	randomMember := app.SelectRandomMember(members)
 
 	// Получение текущего размера пениса выбранного участника
 	pen, err := app.GetUserPen(db, randomMember.ID, chatID)
@@ -63,6 +71,9 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	// Обновление значения у выигравшего участника и времени последнего обновления у всех участников
 	app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID)
 
+	// Генерируем сообщение для чата
+	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize)
+
 	// Отправка сообщения с именем выбранного "антикрасавчика"
-	app.SendMessage(chatID, fmt.Sprintf("Пусть пидором будет @%s! Твой член стал короче на %d см. Теперь он %d см.", randomMember.Name, result.Size, newSize), bot, update.Message.MessageID)
+	app.SendMessage(chatID, message, bot, update.Message.MessageID)
 }

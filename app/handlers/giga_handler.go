@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"database/sql"
-	"fmt"
 	"log"
 
 	"github.com/denis1011101/super_cum_bot/app"
+	messagegenerators "github.com/denis1011101/super_cum_bot/app/handlers/message_generators"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -22,6 +22,14 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	shouldReturn := checkIsSpinNotLegal(lastUpdate)
 	if shouldReturn {
 		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
+		return
+	}
+
+	// Проводим ролл на пропуск выбора гигачада дня
+	if app.SpinSkipAction() {
+		app.UpdateGigaLastUpdate(db, chatID)
+		message := messagegenerators.GetSkipGigaMessage()
+		app.SendMessage(chatID, message, bot, update.Message.MessageID)
 		return
 	}
 
@@ -42,7 +50,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	// Выбор случайного участника
-	randomMember := app.SpinunhandsomeOrGiga(members)
+	randomMember := app.SelectRandomMember(members)
 
 	// Получение текущего размера пениса выбранного участника
 	pen, err := app.GetUserPen(db, randomMember.ID, chatID)
@@ -63,6 +71,9 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	// Обновление значения члена и времени последнего обновления у выигравшего участника
 	app.UpdateGiga(db, newSize, randomMember.ID, chatID)
 
+	// Генерируем сообщени для чата
+	message := messagegenerators.GetRandomGigaMessage(randomMember.Name, result.Size, newSize)
+
 	// Отправка сообщения с именем выбранного "красавчика"
-	app.SendMessage(chatID, fmt.Sprintf("Воу воу воу паприветсвуйте хасанчика @%s!🔥Твой член стал длиннее на %d см. Теперь он %d см.", randomMember.Name, result.Size, newSize), bot, update.Message.MessageID)
+	app.SendMessage(chatID, message, bot, update.Message.MessageID)
 }

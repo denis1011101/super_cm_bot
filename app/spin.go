@@ -113,12 +113,18 @@ type SpinMemberResult struct {
 	AnotherField int // Add any other fields here
 }
 
-// SpinunhandsomeOrGiga выбирает случайного члена из списка членов
-func SpinunhandsomeOrGiga(members []Member) Member {
+// Выбирает случайного участника из списка
+func SelectRandomMember(members []Member) Member {
 	if len(members) == 0 {
 		return Member{}
 	}
 	randomInt := rand.Intn((len(members) * 1000000) - 1)
 	selectedMember := members[randomInt/1000000]
 	return selectedMember
+}
+
+// Возвращает true, если действие должно быть пропущено (1% шанс)
+func SpinSkipAction() bool {
+	randomInt := rand.Intn(100)
+	return randomInt > 98
 }
