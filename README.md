@@ -1,4 +1,6 @@
-# Super Cum Bot
+# Super cum Bot
+
+[![.github/workflows/test.yml](https://github.com/denis1011101/super_cum_bot/actions/workflows/test.yml/badge.svg)](https://github.com/denis1011101/super_cum_bot/actions/workflows/test.yml)
 
 Bot only for fun.
 
