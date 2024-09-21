@@ -33,7 +33,7 @@ go run main.go
 
 1. Run tests:
 ```sh
-go test
+go test ./tests
 ```
 
 ## Usage
