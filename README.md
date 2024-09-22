@@ -51,9 +51,11 @@ The bot supports the following commands:
 
 ## Administrative
 
-- `ps aux | grep bot`                                   - search for bot processes
-- `kill 22148`                                          - stop bot
-- `nohup ./bot &> nohup.out &`                          - start bot in the background
+To restart the bot every 6 hours, add the following cron job:
+
+```sh
+0 */6 * * * cd /root/apps/super_cum_bot && scripts/restart_bot.sh
+```
 
 ## License
 
