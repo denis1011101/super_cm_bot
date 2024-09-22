@@ -63,10 +63,6 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		return
 	}
 
-	for _, penName := range members {
-		log.Printf("Pen Name: %v", penName)
-	}
-
 	if len(members) <= 1 {
 		app.SendMessage(chatID, "Недостаточно пенисов в чате 💅", bot, update.Message.MessageID)
 		return

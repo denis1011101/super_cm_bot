@@ -58,7 +58,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 
 	// Преобразование penNames в список объектов Member
 	members, err := app.GetPenNames(db, chatID)
-	if err != nil {
+	if err != nil { 
 		log.Printf("Error getting pen names: %v", err)
 		return
 	}
@@ -66,10 +66,6 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	if len(members) <= 1 {
 		app.SendMessage(chatID, "Недостаточно пенисов в чате 💅", bot, update.Message.MessageID)
 		return
-	}
-
-	for _, penName := range members {
-		log.Printf("Pen Name: %v", penName)
 	}
 
 	// Выбор случайного участника

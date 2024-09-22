@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"sort"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -156,6 +157,7 @@ func GetPenNames(db *sql.DB, chatID int64) ([]Member, error) {
 		}
 		members = append(members, member)
 	}
+	log.Printf("Members list: %v", members)
 	return members, nil
 }
 
@@ -314,6 +316,33 @@ func UpdateUnhandsomeLastUpdate(db SQLExecutor, chatID int64) error {
 	}
 }
 
+// StartBackupRoutine запускает процесс резервного копирования
+func StartBackupRoutine(db *sql.DB, mutex *sync.Mutex) {
+	go func() {
+		// Настройка таймера для выполнения раз в час
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			// Блокируем базу данных
+			mutex.Lock()
+
+			// Выполнение резервного копирования
+			if err := backupDatabase(); err != nil {
+				log.Printf("Ошибка при резервном копировании базы данных: %v", err)
+			} else {
+				log.Println("Резервное копирование завершено успешно")
+			}
+
+			// Разблокируем базу данных
+			mutex.Unlock()
+
+			// Задержка выполнения на 1 час
+			log.Println("Ожидание 1 час перед следующим резервным копированием...")
+		}
+	}()
+}
+
 // backupDatabase создает резервную копию базы данных SQLite
 func backupDatabase() error {
 	// Определение пути к файлу резервной копии в корневом каталоге
@@ -331,6 +360,11 @@ func backupDatabase() error {
 			return err
 		}
 	}
+
+    // Удаление старых резервных копий, если общий размер превышает 10 МБ
+    if err := removeOldBackups(backupDir); err != nil {
+        return fmt.Errorf("failed to remove old backups: %v", err)
+    }
 
 	// Проверка существования файла базы данных
 	if _, err := os.Stat(source); os.IsNotExist(err) {
@@ -356,31 +390,55 @@ func backupDatabase() error {
     return nil // Возвращаем nil, если все операции прошли успешно
 }
 
-// StartBackupRoutine запускает процесс резервного копирования
-func StartBackupRoutine(db *sql.DB, mutex *sync.Mutex) {
-	go func() {
-		// Настройка таймера для выполнения раз в день
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
+// removeOldBackups удаляет старые резервные копии, если общий размер всех резервных копий превышает 10 МБ
+func removeOldBackups(backupDir string) error {
+    const maxSize = 10 * 1024 * 1024 // 10 МБ
 
-		for range ticker.C {
-			// Блокируем базу данных
-			mutex.Lock()
+    // Получение списка файлов в директории резервных копий
+    files, err := os.ReadDir(backupDir)
+    if err != nil {
+        return fmt.Errorf("failed to read backup directory: %v", err)
+    }
 
-			// Выполнение резервного копирования
-			if err := backupDatabase(); err != nil {
-				log.Printf("Ошибка при резервном копировании базы данных: %v", err)
-			} else {
-				log.Println("Резервное копирование завершено успешно")
-			}
+    // Вычисление общего размера всех файлов
+    var totalSize int64
+    for _, file := range files {
+        if info, err := file.Info(); err == nil && !info.IsDir() {
+            totalSize += info.Size()
+        }
+    }
 
-			// Разблокируем базу данных
-			mutex.Unlock()
+    // Если общий размер меньше или равен maxSize, ничего не делаем
+    if totalSize <= maxSize {
+        return nil
+    }
 
-			// Задержка выполнения на 1 час
-			log.Println("Ожидание 1 час перед следующим резервным копированием...")
+    // Сортировка файлов по времени модификации (от старых к новым)
+    sort.Slice(files, func(i, j int) bool {
+        infoI, _ := files[i].Info()
+        infoJ, _ := files[j].Info()
+        return infoI.ModTime().Before(infoJ.ModTime())
+    })
+
+    // Удаление старых файлов до тех пор, пока общий размер не станет меньше maxSize
+    for _, file := range files {
+        info, err := file.Info()
+        if err != nil || info.IsDir() {
+            continue
+        }
+        filePath := filepath.Join(backupDir, file.Name())
+        if err := os.Remove(filePath); err != nil {
+            return fmt.Errorf("failed to remove file: %v", err)
+        } else {
+			log.Printf("Removed old backup file: %s", filePath)
 		}
-	}()
+        totalSize -= info.Size()
+        if totalSize <= maxSize {
+            break
+        }
+    }
+
+    return nil
 }
 
 // CheckPenLength проверяет значения pen_length и пишет в лог, если больше половины значений равны 5

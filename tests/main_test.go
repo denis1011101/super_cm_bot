@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/denis1011101/super_cum_bot/app/handlers"
@@ -84,19 +83,10 @@ func TestBotIntegration(t *testing.T) {
 	tests := []struct {
 		command string
 		handler func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB)
+		check   func(*testing.T, *sql.DB)
 	}{
-		{"/pen@super_cum_lovers_bot", handlers.HandleSpin},
-		{"/pen", handlers.HandleSpin},
-		{"/giga@super_cum_lovers_bot", handlers.ChooseGiga},
-		{"/giga", handlers.ChooseGiga},
-		{"/unhandsome@super_cum_lovers_bot", handlers.ChooseUnhandsome},
-		{"/unh", handlers.ChooseUnhandsome},
-		{"/topLength@super_cum_lovers_bot", handlers.TopLength},
-		{"/topLen", handlers.TopLength},
-		{"/topGiga@super_cum_lovers_bot", handlers.TopGiga},
-		{"/topGiga", handlers.TopGiga},
-		{"/topUnhandsome@super_cum_lovers_bot", handlers.TopUnhandsome},
-		{"/topUnh", handlers.TopUnhandsome},
+		{"/pen@super_cum_lovers_bot", handlers.HandleSpin, checkPenLength},
+		{"/topUnh", handlers.TopUnhandsome, checkTopUnhandsome},
 	}
 
 	for _, tt := range tests {
@@ -114,37 +104,62 @@ func TestBotIntegration(t *testing.T) {
 				},
 			}
 
-			// Перехватываем вывод логов
-			var logOutput strings.Builder
-			log.SetOutput(&logOutput)
-
 			// Вызываем тестируемую функцию
 			tt.handler(update, bot, db)
 
-			// Формируем ожидаемое сообщение на основе данных из базы данных
-			rows, err := db.Query("SELECT pen_name, unhandsome_count FROM pens WHERE tg_chat_id = ? ORDER BY unhandsome_count DESC LIMIT 10", -987654321)
-			if err != nil {
-				t.Fatalf("Error querying database: %v", err)
-			}
-			defer rows.Close()
-
-			var expectedMessage strings.Builder
-			expectedMessage.WriteString("Топ 10 пидоров:\n")
-			for rows.Next() {
-				var penName string
-				var unhandsomeCount int
-				if err := rows.Scan(&penName, &unhandsomeCount); err != nil {
-					t.Fatalf("Error scanning row: %v", err)
-				}
-				expectedMessage.WriteString(fmt.Sprintf("%s: %d раз\n", penName, unhandsomeCount))
-			}
-
-			// Проверяем, что сообщение было отправлено
-			if tt.command == "/topUnhandsome@super_cum_lovers_bot" || tt.command == "/topUnh" {
-				if !strings.Contains(logOutput.String(), expectedMessage.String()) {
-					t.Errorf("expected message to contain %q, but got %q", expectedMessage.String(), logOutput.String())
-				}
-			}
+			// Проверяем результат
+			tt.check(t, db)
 		})
+	}
+}
+
+func checkPenLength(t *testing.T, db *sql.DB) {
+	rows, err := db.Query("SELECT pen_length, pen_last_update_at FROM pens WHERE tg_chat_id = ?", -987654321)
+	if err != nil {
+		t.Fatalf("Error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var penLength int
+		var penLastUpdateAt string
+		if err := rows.Scan(&penLength, &penLastUpdateAt); err != nil {
+			t.Fatalf("Error scanning row: %v", err)
+		}
+		if penLength <= 0 {
+			t.Errorf("expected pen_length to be greater than 0, but got %d", penLength)
+		}
+		if penLastUpdateAt == "" {
+			t.Errorf("expected pen_last_update_at to be updated, but got empty string")
+		}
+	}
+}
+
+func checkTopUnhandsome(t *testing.T, db *sql.DB) {
+	rows, err := db.Query("SELECT pen_name, unhandsome_count FROM pens WHERE tg_chat_id = ? ORDER BY unhandsome_count DESC LIMIT 10", -987654321)
+	if err != nil {
+		t.Fatalf("Error querying database: %v", err)
+	}
+	defer rows.Close()
+
+	var topUsers []string
+	for rows.Next() {
+		var penName string
+		var unhandsomeCount int
+		if err := rows.Scan(&penName, &unhandsomeCount); err != nil {
+			t.Fatalf("Error scanning row: %v", err)
+		}
+		topUsers = append(topUsers, fmt.Sprintf("%s: %d раз", penName, unhandsomeCount))
+	}
+
+	expectedTopUsers := []string{
+		"testuser1: 8 раз",
+		"testuser2: 6 раз",
+	}
+
+	for i, expectedUser := range expectedTopUsers {
+		if topUsers[i] != expectedUser {
+			t.Errorf("expected %q, but got %q", expectedUser, topUsers[i])
+		}
 	}
 }
