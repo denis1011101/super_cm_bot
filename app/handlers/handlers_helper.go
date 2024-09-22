@@ -36,21 +36,21 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 	chatID := update.Message.Chat.ID
 	userName := update.Message.From.UserName
 
-	// Вставка пользователя в базу данных
-	insertQuery := `
-    INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count)
-    VALUES (?, ?, ?, ?, 0, 0)
-    `
-	_, err := db.Exec(insertQuery, userName, userID, chatID, 5)
+	// Подготовка запроса для вставки пользователя в базу данных
+	stmt, err := db.Prepare(`
+		INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count)
+		VALUES (?, ?, ?, ?, 0, 0)
+	`)
 	if err != nil {
-		log.Printf("Error inserting user into database: %v", err)
+		log.Printf("Error preparing insert statement: %v", err)
 		return
 	}
-
-	// Обновление размера пениса
-	err = app.UpdatePenSize(db, chatID, 5)
+	defer stmt.Close()
+	
+	// Выполнение подготовленного запроса с параметрами и добавление 5 см к размеру пениса
+	_, err = stmt.Exec(userName, userID, chatID, 5)
 	if err != nil {
-		log.Printf("Error updating pen size: %v", err)
+		log.Printf("Error inserting user into database: %v", err)
 		return
 	}
 
