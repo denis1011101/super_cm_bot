@@ -14,8 +14,8 @@ cd super_cum_bot
 
 2. Install dependencies
 ```sh
+go get github.com/mattn/go-sqlite3
 go mod download
-go mod tidy
 ```
 
 3. Create a `.env` file based on `.env_example` and add the following:
