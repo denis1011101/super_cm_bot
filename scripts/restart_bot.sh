@@ -4,20 +4,37 @@ BOT_PATH="$CD_PATH/bot"
 LOG_DIR="$CD_PATH/logs"
 LOG_FILE="$LOG_DIR/restart_bot.log"
 NOHUP_OUT="$LOG_DIR/nohup.out"
+REMOTE_URL="https://github.com/denis1011101/super_cm_bot/raw/main/bot"
 
 log() {
     echo "$(date): $1" >> "$LOG_FILE"
 }
 
-# Создание директории для логов, если она не существует
+# Create log directory if it doesn't exist
 if [ ! -d "$LOG_DIR" ]; then
     mkdir -p "$LOG_DIR"
 fi
 
 cd $CD_PATH
 
-# Check if the bot file changed
+# Get hash of the binary file
+REMOTE_HASH=$(curl -sL $REMOTE_URL | sha256sum | awk '{print $1}')
 
+# Get hash of the current binary file
+if [ -f "$BOT_PATH" ]; then
+    LOCAL_HASH=$(sha256sum "$BOT_PATH" | awk '{print $1}')
+else
+    LOCAL_HASH=""
+fi
+
+# Check differences between the remote and local binary files
+if [ "$REMOTE_HASH" == "$LOCAL_HASH" ]; then
+    log "File bot has not changed. Exiting script."
+    exit 0
+else
+    log "File bot has changed. Running script."
+    curl -L -o "$BOT_PATH" "$REMOTE_URL"
+fi
 
 # Kill all processes related to the bot
 BOT_PIDS=$(pgrep -f "^$BOT_PATH$")
