@@ -17,6 +17,18 @@ fi
 
 cd $CD_PATH
 
+# Get the last status of workflow run
+TEST_STATUS=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+                     https://api.github.com/repos/denis1011101/super_cm_bot/actions/runs | grep -m 1 '"conclusion"' | awk -F'"' '{print $4}')
+
+# Check if the last workflow run was successful
+if [ "$TEST_STATUS" == "success" ]; then
+    log "Status: success. Proceeding with the script."
+else
+    log "Status: $TEST_STATUS. Exiting script."
+    exit 0
+fi
+
 # Get hash of the binary file
 REMOTE_HASH=$(curl -sL $REMOTE_URL | sha256sum | awk '{print $1}')
 
@@ -33,7 +45,6 @@ if [ "$REMOTE_HASH" == "$LOCAL_HASH" ]; then
     exit 0
 else
     log "File bot has changed. Running script."
-    curl -L -o "$BOT_PATH" "$REMOTE_URL"
 fi
 
 # Kill all processes related to the bot
@@ -54,9 +65,15 @@ fi
 
 # Delete bot file
 rm -f $BOT_PATH
+log "Bot file deleted."
 
 # Pull the latest binary file from the repository with curl
-curl -L -o bot https://github.com/denis1011101/super_cm_bot/raw/main/bot
+curl -L -o "$BOT_PATH" "$REMOTE_URL"
+log "Bot file downloaded."
+
+# Make the bot file executable
+chmod +x $BOT_PATH
+log "Bot file made executable."
 
 # Start the bot in the background
 nohup $BOT_PATH &> $NOHUP_OUT &
