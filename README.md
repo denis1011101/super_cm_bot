@@ -54,7 +54,7 @@ The bot supports the following commands:
 To restart the bot every hours, add the following cron job:
 
 ```sh
-0 * * * * cd /root/apps/super_cum_bot && scripts/restart_bot.sh
+0 * * * * cd /root/apps/super_cm_bot && scripts/restart_bot.sh
 ```
 
 ## License

@@ -17,16 +17,15 @@ fi
 
 cd $CD_PATH
 
-# Get the last status of workflow run
-TEST_STATUS=$(curl -s -H "Accept: application/vnd.github.v3+json" \
-                     https://api.github.com/repos/denis1011101/super_cm_bot/actions/runs | grep -m 1 '"conclusion"' | awk -F'"' '{print $4}')
-
-# Check if the last workflow run was successful
-if [ "$TEST_STATUS" == "success" ]; then
-    log "Status: success. Proceeding with the script."
+# Get information whether the bot is running
+BOT_PIDS=$(pgrep -f "^$BOT_PATH$")
+if [ -n "$BOT_PIDS" ]; then
+    log "Bot is running with PID(s): $BOT_PIDS"
 else
-    log "Status: $TEST_STATUS. Exiting script."
-    exit 0
+    log "Bot is not running. Restarting the bot."
+    nohup $BOT_PATH &> $NOHUP_OUT &
+    NEW_PID=$!
+    log "Bot restarted with PID $NEW_PID"
 fi
 
 # Get hash of the binary file
@@ -45,6 +44,18 @@ if [ "$REMOTE_HASH" == "$LOCAL_HASH" ]; then
     exit 0
 else
     log "File bot has changed. Running script."
+fi
+
+# Get the last status of workflow run
+TEST_STATUS=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+                     https://api.github.com/repos/denis1011101/super_cm_bot/actions/runs | grep -m 1 '"conclusion"' | awk -F'"' '{print $4}')
+
+# Check if the last workflow run was successful
+if [ "$TEST_STATUS" == "success" ]; then
+    log "Status: success. Proceeding with the script."
+else
+    log "Status: $TEST_STATUS. Exiting script."
+    exit 0
 fi
 
 # Kill all processes related to the bot
