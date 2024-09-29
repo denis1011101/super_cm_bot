@@ -6,13 +6,13 @@ import (
 	"log"
 	"strings"
 
-	"github.com/denis1011101/super_cum_bot/app"
+	"github.com/denis1011101/super_cm_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	chatID := update.Message.Chat.ID
-	
+
 	// Подготовка запроса для получения топа по длине
 	stmt, err := db.Prepare(`
 		SELECT pen_name, pen_length 
@@ -26,7 +26,7 @@ func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		return
 	}
 	defer stmt.Close()
-	
+
 	// Выполнение подготовленного запроса с параметрами
 	rows, err := stmt.Query(chatID)
 	if err != nil {

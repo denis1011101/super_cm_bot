@@ -1,6 +1,6 @@
 # Super cm Bot
 
-[![.github/workflows/test.yml](https://github.com/denis1011101/super_cum_bot/actions/workflows/test.yml/badge.svg)](https://github.com/denis1011101/super_cum_bot/actions/workflows/test.yml)
+[![.github/workflows/test.yml](https://github.com/denis1011101/super_cm_bot/actions/workflows/test.yml/badge.svg)](https://github.com/denis1011101/super_cm_bot/actions/workflows/test.yml)
 
 Bot only for fun.
 
@@ -8,8 +8,8 @@ Bot only for fun.
 
 1. Clone the repo:
 ```sh
-git clone https://github.com/denis1011101/super_cum_bot.git
-cd super_cum_bot
+git clone https://github.com/denis1011101/super_cm_bot.git
+cd super_cm_bot
 ```
 
 2. Install dependencies

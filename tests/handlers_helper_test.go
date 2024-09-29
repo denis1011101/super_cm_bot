@@ -4,13 +4,14 @@ import (
 	"testing"
 	"time"
 	_ "unsafe"
-	_ "github.com/denis1011101/super_cum_bot/app/handlers"
+
+	_ "github.com/denis1011101/super_cm_bot/app/handlers"
 )
 
-//go:linkname handlersCheckIsSpinNotLegal github.com/denis1011101/super_cum_bot/app/handlers.checkIsSpinNotLegal
+//go:linkname handlersCheckIsSpinNotLegal github.com/denis1011101/super_cm_bot/app/handlers.checkIsSpinNotLegal
 func handlersCheckIsSpinNotLegal(lastUpdate time.Time) bool
 
-func TestCheckIsSpinNotLegal(t *testing.T) {	
+func TestCheckIsSpinNotLegal(t *testing.T) {
 	// Test case: Last update is today and duration is less than 4 hours
 	lastUpdate := time.Now().Add(-1 * time.Hour)
 	if handlersCheckIsSpinNotLegal(lastUpdate) == false {

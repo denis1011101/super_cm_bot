@@ -9,7 +9,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/denis1011101/super_cum_bot/app/handlers"
+	"github.com/denis1011101/super_cm_bot/app/handlers"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
@@ -85,7 +85,7 @@ func TestBotIntegration(t *testing.T) {
 		handler func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB)
 		check   func(*testing.T, *sql.DB)
 	}{
-		{"/pen@super_cum_lovers_bot", handlers.HandleSpin, checkPenLength},
+		{"/pen", handlers.HandleSpin, checkPenLength},
 		{"/topUnh", handlers.TopUnhandsome, checkTopUnhandsome},
 	}
 

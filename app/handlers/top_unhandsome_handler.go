@@ -6,7 +6,7 @@ import (
 	"log"
 	"strings"
 
-	"github.com/denis1011101/super_cum_bot/app"
+	"github.com/denis1011101/super_cm_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 

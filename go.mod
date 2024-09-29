@@ -1,4 +1,4 @@
-module github.com/denis1011101/super_cum_bot
+module github.com/denis1011101/super_cm_bot
 
 go 1.22.2
 

@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/denis1011101/super_cum_bot/app"
+	"github.com/denis1011101/super_cm_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -46,7 +46,7 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 		return
 	}
 	defer stmt.Close()
-	
+
 	// Выполнение подготовленного запроса с параметрами и добавление 5 см к размеру пениса
 	_, err = stmt.Exec(userName, userID, chatID, 5)
 	if err != nil {

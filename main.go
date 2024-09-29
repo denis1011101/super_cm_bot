@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/denis1011101/super_cum_bot/app"
-	"github.com/denis1011101/super_cum_bot/app/handlers"
+	"github.com/denis1011101/super_cm_bot/app"
+	"github.com/denis1011101/super_cm_bot/app/handlers"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
@@ -30,15 +30,15 @@ func main() {
 	// Настройка ротации логов
 	log.SetOutput(&lumberjack.Logger{
 		Filename:   logFilePath,
-		MaxSize:    10, // Максимальный размер файла в мегабайтах
-		MaxBackups: 3,  // Максимальное количество старых файлов
-		MaxAge:     28, // Максимальное количество дней хранения старых файлов
+		MaxSize:    10,   // Максимальный размер файла в мегабайтах
+		MaxBackups: 3,    // Максимальное количество старых файлов
+		MaxAge:     28,   // Максимальное количество дней хранения старых файлов
 		Compress:   true, // Сжатие старых файлов
 	})
 
-    // Настройка логирования SQLite
-    os.Setenv("SQLITE_TRACE", "1")
-    os.Setenv("SQLITE_TRACE_FILE", logFilePath)
+	// Настройка логирования SQLite
+	os.Setenv("SQLITE_TRACE", "1")
+	os.Setenv("SQLITE_TRACE_FILE", logFilePath)
 
 	// Открываем файл для записи логов
 	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
@@ -47,8 +47,8 @@ func main() {
 	}
 	defer logFile.Close()
 
-    // Настраиваем логгер для записи в файл
-    log.SetOutput(logFile)
+	// Настраиваем логгер для записи в файл
+	log.SetOutput(logFile)
 
 	err = godotenv.Load()
 	if err != nil {
@@ -69,32 +69,32 @@ func main() {
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 
 	specificChatIDStr := os.Getenv("SPECIFIC_CHAT_ID")
-    if specificChatIDStr == "" {
-        log.Fatalf("SPECIFIC_CHAT_ID is not set in .env file")
-    }
+	if specificChatIDStr == "" {
+		log.Fatalf("SPECIFIC_CHAT_ID is not set in .env file")
+	}
 
 	specificChatID, err := strconv.ParseInt(specificChatIDStr, 10, 64)
-    if err != nil {
-        log.Fatalf("Invalid SPECIFIC_CHAT_ID: %v", err)
-    }
+	if err != nil {
+		log.Fatalf("Invalid SPECIFIC_CHAT_ID: %v", err)
+	}
 
 	// Пример логирования
 	log.Println("This is a log message")
 
-    u := tgbotapi.NewUpdate(0)
-    u.Timeout = 60
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
 
-    updates := bot.GetUpdatesChan(u)
+	updates := bot.GetUpdatesChan(u)
 
 	db, err := app.InitDB()
-    if err != nil {
-        log.Fatal("Ошибка инициализации базы данных: ", err)
-    }
-    defer func() {
-        if err := db.Close(); err != nil {
-            log.Fatal("Ошибка закрытия базы данных: ", err)
-        }
-    }()
+	if err != nil {
+		log.Fatal("Ошибка инициализации базы данных: ", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Fatal("Ошибка закрытия базы данных: ", err)
+		}
+	}()
 
 	// Создаем мьютекс для блокировки базы данных
 	mutex := &sync.Mutex{}
@@ -108,24 +108,24 @@ func main() {
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
 		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,
-		"/pen":						           handlers.HandleSpin,
+		"/pen":                                handlers.HandleSpin,
 		"/giga@super_cum_lovers_bot":          handlers.ChooseGiga,
-		"/giga": 					           handlers.ChooseGiga,
+		"/giga":                               handlers.ChooseGiga,
 		"/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
-		"/unh":								   handlers.ChooseUnhandsome,
+		"/unh":                                handlers.ChooseUnhandsome,
 		"/topLength@super_cum_lovers_bot":     handlers.TopLength,
-		"/topLen":						       handlers.TopLength,
+		"/topLen":                             handlers.TopLength,
 		"/topGiga@super_cum_lovers_bot":       handlers.TopGiga,
-		"/topGiga": 					       handlers.TopGiga,
+		"/topGiga":                            handlers.TopGiga,
 		"/topUnhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
-		"/topUnh":							   handlers.TopUnhandsome,
+		"/topUnh":                             handlers.TopUnhandsome,
 	}
 
 	// Обработка обновлений
 	for update := range updates {
 		if update.Message != nil {
 			chatID := update.Message.Chat.ID
-	        if chatID == specificChatID {
+			if chatID == specificChatID {
 				// Обработка команд
 				if handler, exists := commandHandlers[update.Message.Text]; exists {
 					handler(update, bot, db)

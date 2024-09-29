@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"log"
 
-	"github.com/denis1011101/super_cum_bot/app"
-	messagegenerators "github.com/denis1011101/super_cum_bot/app/handlers/message_generators"
+	"github.com/denis1011101/super_cm_bot/app"
+	messagegenerators "github.com/denis1011101/super_cm_bot/app/handlers/message_generators"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -13,29 +13,20 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
 
-    // Проверка наличия пользователя в базе данных
-    exists, err := app.UserExists(db, userID, chatID)
-    if err != nil {
-        log.Printf("Error checking if user exists: %v", err)
-        return
-    }
+	// Проверка наличия пользователя в базе данных
+	exists, err := app.UserExists(db, userID, chatID)
+	if err != nil {
+		log.Printf("Error checking if user exists: %v", err)
+		return
+	}
 
-    if !exists {
-        // Регистрация пользователя, если он не найден в базе данных
-        log.Printf("User not found in database, registering: %v", userID)
-        registerBot(update, bot, db, true)
-    }
+	if !exists {
+		// Регистрация пользователя, если он не найден в базе данных
+		log.Printf("User not found in database, registering: %v", userID)
+		registerBot(update, bot, db, true)
+	}
 
-    // Получение текущего размера пениса пользователя
-    pen, err := app.GetUserPen(db, userID, chatID)
-    if err != nil {
-        log.Printf("Error querying pen size: %v", err)
-        return
-    }
-
-    log.Printf("Current pen size for tg_pen_id %d in chat_id %d: %d", userID, chatID, pen.Size)
-
-	// Проверка времени последнего обновления
+	// Получение времени последнего обновления
 	lastUpdate, err := app.GetUnhandsomeLastUpdateTime(db, chatID)
 	if err != nil {
 		return
@@ -43,7 +34,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 
 	// Проверка времени последнего обновления
 	shouldReturn := checkIsSpinNotLegal(lastUpdate)
-	if shouldReturn {
+	if shouldReturn { // TODO: Добавить вывод На сегодня пидоров хватит. Если чё пидор сегодня @%s
 		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
 		return
 	}
@@ -70,6 +61,19 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 
 	// Выбор случайного участника
 	randomMember := app.SelectRandomMember(members)
+
+
+	// Получение текущего размера пениса выбранного участника
+	pen, err := app.GetUserPen(db, randomMember.ID, chatID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			log.Printf("No pen size found for tg_pen_id: %d in chat_id: %d", randomMember.ID, chatID)
+		} else {
+			log.Printf("Error getting current pen size: %v", err)
+		}
+		return
+	}
+	log.Printf("Current pen size for tg_pen_id %d in chat_id %d: %d", randomMember.ID, chatID, pen.Size)
 
 	// Вычисление нового размера
 	result := app.SpinDiffPenSize(pen)
