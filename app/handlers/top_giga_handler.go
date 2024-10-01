@@ -6,17 +6,22 @@ import (
 	"log"
 	"strings"
 
-	"github.com/denis1011101/super_cm_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+type TopGigaStruct struct {
+	ID      int    `db:"handsome_count"`
+	Data    string `db:"pen_name"`
+	Comment string
+}
 
 // TopGiga обрабатывает команду "топ гигачад"
 func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	chatID := update.Message.Chat.ID
 
-	// Подготовка запроса для получения топа по гигачатам
+	// Подготовка запроса для получения топа по гигачадам
 	stmt, err := db.Prepare(`
-		SELECT pen_name, handsome_count 
+		SELECT handsome_count, pen_name 
 		FROM pens 
 		WHERE tg_chat_id = ? 
 		ORDER BY handsome_count DESC 
@@ -36,19 +41,40 @@ func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 	defer rows.Close()
 
-	// Формирование сообщения с рейтингом
-	var sb strings.Builder
-	sb.WriteString("Топ 10 гигачатов:\n")
-	for rows.Next() {
-		var name string
-		var count int
-		if err := rows.Scan(&name, &count); err != nil {
+	var records []TopGigaStruct
+	uniqueComments := []string{"Альфа самец 💪😎", "Четкий пацан 🐺"}
+	commonComment := "Похож на пидора 🤡"
+
+	// Обработка результатов запроса
+	for i := 0; rows.Next(); i++ {
+		var record TopGigaStruct
+		if err := rows.Scan(&record.ID, &record.Data); err != nil {
 			log.Printf("Error scanning row: %v", err)
 			return
 		}
-		sb.WriteString(fmt.Sprintf("%s: %d раз\n", name, count))
+
+		// Присвоение комментариев в зависимости от индекса
+		if i < 2 {
+			record.Comment = uniqueComments[i]
+		} else {
+			record.Comment = commonComment
+		}
+
+		records = append(records, record)
 	}
 
+	// Формирование сообщения с рейтингом
+	var sb strings.Builder
+	sb.WriteString("Топ 10 гигачадов:\n")
+	for _, record := range records {
+		sb.WriteString(fmt.Sprintf("@%s: %d раз. %s\n", record.Data, record.ID, record.Comment))
+	}
+
+	message := sb.String()
+
 	// Отправка сообщения
-	app.SendMessage(chatID, sb.String(), bot, update.Message.MessageID)
+	msg := tgbotapi.NewMessage(chatID, message)
+	if _, err := bot.Send(msg); err != nil {
+		log.Printf("Ошибка при отправке сообщения: %v", err)
+	}
 }
