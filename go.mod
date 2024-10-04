@@ -8,6 +8,8 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.23
 )
 
+replace github.com/go-telegram-bot-api/telegram-bot-api/v5 => github.com/Keklil/telegram-bot-api/v5 v5.1.5
+
 require gopkg.in/natefinch/lumberjack.v2 v2.2.1
 
 require github.com/DATA-DOG/go-sqlmock v1.5.2

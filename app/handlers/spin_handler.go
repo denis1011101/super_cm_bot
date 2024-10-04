@@ -88,4 +88,5 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 
 	log.Printf("Response text: %s", responseText)
 	app.SendMessage(chatID, responseText, bot, update.Message.MessageID)
+    app.SendReaction(chatID, "👍", bot, update.Message.MessageID)
 }

@@ -18,3 +18,10 @@ func SendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessage
         log.Printf("Message sent to chat ID %d: %s", chatID, text)
     }
 }
+
+func SendReaction(chatId int64, emoji string, bot *tgbotapi.BotAPI, replyToMessageId int) {
+	reaction := tgbotapi.NewReaction(chatId, replyToMessageId, emoji)
+	if _, err := bot.Send(reaction); err != nil {
+        log.Printf("Error sending reaction to chat %d: %v", chatId, err)
+    }
+}
