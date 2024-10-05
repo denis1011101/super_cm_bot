@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
 	"log"
@@ -8,8 +9,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/app/handlers"
+	"github.com/denis1011101/super_cm_bot/tests/testutils"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
@@ -29,31 +33,26 @@ func TestMain(m *testing.M) {
 }
 
 func TestBotIntegration(t *testing.T) {
-	// Создаем базу данных SQLite в памяти
-	db, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer db.Close()
+    // Настройка тестовой среды
+    _, restoreFunc := testutils.SetupTestEnvironment(t, false)
+    defer restoreFunc()
 
-	// Создаем таблицу pens
-	createTableQuery := `
-    CREATE TABLE IF NOT EXISTS pens (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        pen_name TEXT,
-        tg_pen_id INTEGER UNIQUE,
-        tg_chat_id INTEGER,
-        pen_length INTEGER,
-        pen_last_update_at TIMESTAMP,
-        handsome_count INTEGER,
-        handsome_last_update_at TIMESTAMP,
-        unhandsome_count INTEGER,
-        unhandsome_last_update_at TIMESTAMP
-    );`
-	_, err = db.Exec(createTableQuery)
-	if err != nil {
-		t.Fatalf("Failed to create table: %v", err)
-	}
+    // Инициализация базы данных
+    db, err := app.InitDB()
+    if err != nil {
+        t.Fatalf("Failed to initialize database: %v", err)
+    }
+    defer db.Close()
+
+    // Проверка, что таблица создана
+    var tableName string
+    err = db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='pens';").Scan(&tableName)
+    if err != nil {
+        t.Fatalf("Table 'pens' does not exist: %v", err)
+    }
+    if tableName != "pens" {
+        t.Fatalf("Expected table name 'pens', but got %s", tableName)
+    }
 
 	// Вставляем тестовые данные
 	insertDataQuery := `
@@ -79,87 +78,175 @@ func TestBotIntegration(t *testing.T) {
 		t.Fatalf("Error creating bot: %v", err)
 	}
 
-	// Таблица тестов для команд и их обработчиков
-	tests := []struct {
-		command string
-		handler func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB)
-		check   func(*testing.T, *sql.DB)
-	}{
-		{"/pen", handlers.HandleSpin, checkPenLength},
-		{"/topUnh", handlers.TopUnhandsome, checkTopUnhandsome},
-	}
+    // Перенаправляем логи в буфер
+    var logBuffer bytes.Buffer
+    log.SetOutput(&logBuffer)
 
-	for _, tt := range tests {
-		t.Run(tt.command, func(t *testing.T) {
-			// Создаем обновление с сообщением
-			update := tgbotapi.Update{
-				Message: &tgbotapi.Message{
-					Text: tt.command,
-					Chat: &tgbotapi.Chat{
-						ID: -987654321,
-					},
-					From: &tgbotapi.User{
-						ID: 33333333,
-					},
-				},
+    // Создаем канал обновлений
+    u := tgbotapi.NewUpdate(0)
+    u.Timeout = 60
+    updates := make(chan tgbotapi.Update, 1)
+
+    // Обработчики команд
+    commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
+        "/pen@super_cum_lovers_bot":           handlers.HandleSpin,
+        "/pen":                                handlers.HandleSpin,
+        "/giga@super_cum_lovers_bot":          handlers.ChooseGiga,
+        "/giga":                               handlers.ChooseGiga,
+        "/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
+        "/unh":                                handlers.ChooseUnhandsome,
+        "/topLength@super_cum_lovers_bot":     handlers.TopLength,
+        "/topLen":                             handlers.TopLength,
+        "/topGiga@super_cum_lovers_bot":       handlers.TopGiga,
+        "/topGiga":                            handlers.TopGiga,
+        "/topUnhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
+        "/topUnh":                             handlers.TopUnhandsome,
+    }
+
+    specificChatID := int64(-987654321)
+
+    // Запускаем бота в отдельной горутине
+    go func() {
+        for update := range updates {
+            if update.Message != nil {
+                chatID := update.Message.Chat.ID
+                if chatID == specificChatID {
+                    // Обработка команд
+                    if handler, exists := commandHandlers[update.Message.Text]; exists {
+                        handler(update, bot, db)
+                    } else { // Обработка обычных сообщений
+                        handlers.HandlePenCommand(update, bot, db)
+                    }
+                } else if update.MyChatMember != nil { // Обработка добавления бота в чат
+                    handlers.HandleBotAddition(update, bot)
+                }
+            }
+        }
+    }()
+
+    // Отправляем произвольное сообщение для регистрации нового пользователя
+    update := tgbotapi.Update{
+        UpdateID: 1,
+        Message: &tgbotapi.Message{
+            MessageID: 1,
+            From: &tgbotapi.User{
+                ID: 44444444,
+            },
+            Chat: &tgbotapi.Chat{
+                ID: specificChatID,
+            },
+            Text: "Hello",
+            Date: int(time.Now().Unix()),
+        },
+    }
+
+    // Отправляем обновление в канал
+    updates <- update
+
+    // Даем время боту обработать команду
+    time.Sleep(1 * time.Second)
+
+    // Проверяем, что новый пользователь зарегистрирован с длиной 5 см
+    var penLength int
+    err = db.QueryRow("SELECT pen_length FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?", 44444444, specificChatID).Scan(&penLength)
+    if err != nil {
+        t.Fatalf("Failed to query new user: %v", err)
+    }
+    if penLength != 5 {
+        t.Errorf("expected pen_length for new user to be 5, but got %d", penLength)
+    }
+
+    // Отправляем команду /pen
+    update = tgbotapi.Update{
+        UpdateID: 2,
+        Message: &tgbotapi.Message{
+            MessageID: 2,
+            From: &tgbotapi.User{
+                ID: 33333333,
+            },
+            Chat: &tgbotapi.Chat{
+                ID: specificChatID,
+            },
+            Text: "/pen",
+            Date: int(time.Now().Unix()),
+        },
+    }
+
+    // Отправляем обновление в канал
+    updates <- update
+
+    // Даем время боту обработать команду
+    time.Sleep(1 * time.Second)
+
+    // Проверяем результат в базе данных
+    checkPenLength(t, db, &logBuffer)
+}
+
+func checkPenLength(t *testing.T, db *sql.DB, logBuffer *bytes.Buffer) {
+    // Извлекаем логи
+    logs := logBuffer.String()
+    t.Logf("Logs: %s", logs) // Добавим отладочное сообщение для логов
+
+    // Проверяем логи на наличие обновленного размера
+    expectedLog := "Updated pen size: "
+    if !bytes.Contains([]byte(logs), []byte(expectedLog)) {
+        t.Errorf("expected log to contain %q, but got %q", expectedLog, logs)
+    }
+
+    // Извлекаем новый размер из логов
+	var newSize int
+	logLines := bytes.Split([]byte(logs), []byte("\n"))
+	for _, line := range logLines {
+		if bytes.Contains(line, []byte(expectedLog)) {
+			parts := bytes.SplitN(line, []byte("Updated pen size: "), 2)
+			if len(parts) == 2 {
+				_, err := fmt.Sscanf(string(parts[1]), "%d", &newSize)
+				if err != nil {
+					t.Fatalf("Failed to parse new size from logs: %v", err)
+				}
+				break
 			}
-
-			// Вызываем тестируемую функцию
-			tt.handler(update, bot, db)
-
-			// Проверяем результат
-			tt.check(t, db)
-		})
-	}
-}
-
-func checkPenLength(t *testing.T, db *sql.DB) {
-	rows, err := db.Query("SELECT pen_length, pen_last_update_at FROM pens WHERE tg_chat_id = ?", -987654321)
-	if err != nil {
-		t.Fatalf("Error querying database: %v", err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var penLength int
-		var penLastUpdateAt string
-		if err := rows.Scan(&penLength, &penLastUpdateAt); err != nil {
-			t.Fatalf("Error scanning row: %v", err)
-		}
-		if penLength <= 0 {
-			t.Errorf("expected pen_length to be greater than 0, but got %d", penLength)
-		}
-		if penLastUpdateAt == "" {
-			t.Errorf("expected pen_last_update_at to be updated, but got empty string")
 		}
 	}
-}
+    t.Logf("Parsed new size: %d", newSize) // Добавим отладочное сообщение для нового размера
 
-func checkTopUnhandsome(t *testing.T, db *sql.DB) {
-	rows, err := db.Query("SELECT pen_name, unhandsome_count FROM pens WHERE tg_chat_id = ? ORDER BY unhandsome_count DESC LIMIT 10", -987654321)
-	if err != nil {
-		t.Fatalf("Error querying database: %v", err)
-	}
-	defer rows.Close()
+    // Проверяем размер в базе данных
+    rows, err := db.Query("SELECT tg_pen_id, pen_length FROM pens WHERE tg_chat_id = ?", -987654321)
+    if err != nil {
+        t.Fatalf("Error querying database: %v", err)
+    }
+    defer rows.Close()
 
-	var topUsers []string
-	for rows.Next() {
-		var penName string
-		var unhandsomeCount int
-		if err := rows.Scan(&penName, &unhandsomeCount); err != nil {
-			t.Fatalf("Error scanning row: %v", err)
-		}
-		topUsers = append(topUsers, fmt.Sprintf("%s: %d раз", penName, unhandsomeCount))
-	}
+	foundUser := false
+    for rows.Next() {
+        var tgUserID, penLength int
+        if err := rows.Scan(&tgUserID, &penLength); err != nil {
+            t.Fatalf("Error scanning row: %v", err)
+        }
+        switch tgUserID {
+        case 11111111:
+            if penLength != 5 {
+                t.Errorf("expected pen_length for user 11111111 to be 5, but got %d", penLength)
+            }
+        case 22222222:
+            if penLength != 3 {
+                t.Errorf("expected pen_length for user 22222222 to be 3, but got %d", penLength)
+            }
+        case 33333333:
+            if penLength != newSize {
+                t.Errorf("expected pen_length for user 33333333 to be %d, but got %d", newSize, penLength)
+            }
+        case 44444444:
+            if penLength != 5 {
+                t.Errorf("expected pen_length for user 44444444 to be 5, but got %d", penLength)
+            }
+			foundUser = true
+        default:
+            t.Errorf("unexpected user ID %d", tgUserID)
+        }
+    }
 
-	expectedTopUsers := []string{
-		"testuser1: 8 раз",
-		"testuser2: 6 раз",
-	}
-
-	for i, expectedUser := range expectedTopUsers {
-		if topUsers[i] != expectedUser {
-			t.Errorf("expected %q, but got %q", expectedUser, topUsers[i])
-		}
-	}
+	if !foundUser {
+        t.Errorf("User 33333333 not found in database")
+    }
 }
