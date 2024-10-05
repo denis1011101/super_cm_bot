@@ -13,20 +13,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Restore Go modules cache
-        run: |
-          if [ -f go-mod-cache.tar ]; then
-            tar -xf go-mod-cache.tar -C ~/
-          fi
-
       - name: Install dependencies
         run: go mod download
-
-      - name: Save Go modules cache
-        run: |
-          if [ -d ~/go/pkg/mod ] || [ -d ~/.cache/go-build ]; then
-            tar -cf go-mod-cache.tar -C ~/ go/pkg/mod ~/.cache/go-build
-          fi
 
       - name: Run tests
         run: go test ./tests
