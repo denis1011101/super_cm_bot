@@ -29,4 +29,4 @@ jobs:
           fi
 
       - name: Run tests
-        run: go test -count=1 -parallel 4 ./tests
+        run: go test ./tests
