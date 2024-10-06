@@ -3,11 +3,12 @@ package tests
 import (
 	"bytes"
 	"database/sql"
-	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
+    "regexp"
+    "strconv"
 	"testing"
 	"time"
 
@@ -30,6 +31,62 @@ func TestMain(m *testing.M) {
 	// Запуск тестов
 	code := m.Run()
 	os.Exit(code)
+}
+
+// sendMessage отправляет сообщение в канал обновлений
+func sendMessage(t *testing.T, updates chan tgbotapi.Update, chatID int64, userID int64, text string) {
+    update := tgbotapi.Update{
+        UpdateID: 1,
+        Message: &tgbotapi.Message{
+            MessageID: 1,
+            From: &tgbotapi.User{
+                ID: userID,
+            },
+            Chat: &tgbotapi.Chat{
+                ID: chatID,
+            },
+            Text: text,
+            Date: int(time.Now().Unix()),
+        },
+    }
+
+    // Отправляем обновление в канал
+    updates <- update
+}
+
+// checkPenLength проверяет длину pen в базе данных
+func checkPenLength(t *testing.T, db *sql.DB, userID int64, expectedLength int) {
+    var penLength int
+    err := db.QueryRow("SELECT pen_length FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?", userID, -987654321).Scan(&penLength)
+    if err != nil {
+        t.Fatalf("Failed to query user %d: %v", userID, err)
+    }
+    if penLength != expectedLength {
+        t.Errorf("expected pen_length for user %d to be %d, but got %d", userID, expectedLength, penLength)
+    }
+}
+
+// checkLogs проверяет логи на наличие определенного сообщения
+func checkLogs(t *testing.T, logBuffer *bytes.Buffer, expectedLog string) {
+    logs := logBuffer.String()
+    if !bytes.Contains([]byte(logs), []byte(expectedLog)) {
+        t.Errorf("expected log to contain %q, but got %q", expectedLog, logs)
+    }
+}
+
+// extractPenLengthFromLogs извлекает длину pen из логов
+func extractPenLengthFromLogs(t *testing.T, logBuffer *bytes.Buffer) int {
+    logs := logBuffer.String()
+    re := regexp.MustCompile(`Updated pen size: (\d+)`)
+    matches := re.FindStringSubmatch(logs)
+    if len(matches) < 2 {
+        t.Fatalf("Failed to extract pen_length from logs: %v", logs)
+    }
+    penLength, err := strconv.Atoi(matches[1])
+    if err != nil {
+        t.Fatalf("Failed to convert pen_length to int: %v", err)
+    }
+    return penLength
 }
 
 func TestBotIntegration(t *testing.T) {
@@ -83,23 +140,15 @@ func TestBotIntegration(t *testing.T) {
     log.SetOutput(&logBuffer)
 
     // Создаем канал обновлений
-    u := tgbotapi.NewUpdate(0)
-    u.Timeout = 60
     updates := make(chan tgbotapi.Update, 1)
 
     // Обработчики команд
     commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
-        "/pen@super_cum_lovers_bot":           handlers.HandleSpin,
         "/pen":                                handlers.HandleSpin,
-        "/giga@super_cum_lovers_bot":          handlers.ChooseGiga,
         "/giga":                               handlers.ChooseGiga,
-        "/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
         "/unh":                                handlers.ChooseUnhandsome,
-        "/topLength@super_cum_lovers_bot":     handlers.TopLength,
         "/topLen":                             handlers.TopLength,
-        "/topGiga@super_cum_lovers_bot":       handlers.TopGiga,
         "/topGiga":                            handlers.TopGiga,
-        "/topUnhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
         "/topUnh":                             handlers.TopUnhandsome,
     }
 
@@ -124,129 +173,37 @@ func TestBotIntegration(t *testing.T) {
         }
     }()
 
+    // Проверяем регуистрацию нового пользователя
     // Отправляем произвольное сообщение для регистрации нового пользователя
-    update := tgbotapi.Update{
-        UpdateID: 1,
-        Message: &tgbotapi.Message{
-            MessageID: 1,
-            From: &tgbotapi.User{
-                ID: 44444444,
-            },
-            Chat: &tgbotapi.Chat{
-                ID: specificChatID,
-            },
-            Text: "Hello",
-            Date: int(time.Now().Unix()),
-        },
-    }
-
-    // Отправляем обновление в канал
-    updates <- update
+    sendMessage(t, updates, specificChatID, 44444444, "Hello")
 
     // Даем время боту обработать команду
     time.Sleep(1 * time.Second)
 
     // Проверяем, что новый пользователь зарегистрирован с длиной 5 см
-    var penLength int
-    err = db.QueryRow("SELECT pen_length FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?", 44444444, specificChatID).Scan(&penLength)
-    if err != nil {
-        t.Fatalf("Failed to query new user: %v", err)
-    }
-    if penLength != 5 {
-        t.Errorf("expected pen_length for new user to be 5, but got %d", penLength)
-    }
+    checkPenLength(t, db, 44444444, 5)
 
+    // Проверяем обработку команды /pen
     // Отправляем команду /pen
-    update = tgbotapi.Update{
-        UpdateID: 2,
-        Message: &tgbotapi.Message{
-            MessageID: 2,
-            From: &tgbotapi.User{
-                ID: 33333333,
-            },
-            Chat: &tgbotapi.Chat{
-                ID: specificChatID,
-            },
-            Text: "/pen",
-            Date: int(time.Now().Unix()),
-        },
-    }
-
-    // Отправляем обновление в канал
-    updates <- update
+    sendMessage(t, updates, specificChatID, 33333333, "/pen")
 
     // Даем время боту обработать команду
     time.Sleep(1 * time.Second)
 
+    // Извлекаем длину из логов
+    penLength := extractPenLengthFromLogs(t, &logBuffer)
+
     // Проверяем результат в базе данных
-    checkPenLength(t, db, &logBuffer)
-}
+    checkPenLength(t, db, 33333333, penLength)
 
-func checkPenLength(t *testing.T, db *sql.DB, logBuffer *bytes.Buffer) {
-    // Извлекаем логи
-    logs := logBuffer.String()
-    t.Logf("Logs: %s", logs) // Добавим отладочное сообщение для логов
+    // Проверяем результат остальных пользователей в базе данных
+    checkPenLength(t, db, 11111111, 5)
+    checkPenLength(t, db, 22222222, 3)
 
-    // Проверяем логи на наличие обновленного размера
-    expectedLog := "Updated pen size: "
-    if !bytes.Contains([]byte(logs), []byte(expectedLog)) {
-        t.Errorf("expected log to contain %q, but got %q", expectedLog, logs)
-    }
+    // Проверяем что повторный вызов /pen не увеличит длину так как прошло меньше 24 часов
+    // Отправляем команду /pen
+    sendMessage(t, updates, specificChatID, 33333333, "/pen")
 
-    // Извлекаем новый размер из логов
-	var newSize int
-	logLines := bytes.Split([]byte(logs), []byte("\n"))
-	for _, line := range logLines {
-		if bytes.Contains(line, []byte(expectedLog)) {
-			parts := bytes.SplitN(line, []byte("Updated pen size: "), 2)
-			if len(parts) == 2 {
-				_, err := fmt.Sscanf(string(parts[1]), "%d", &newSize)
-				if err != nil {
-					t.Fatalf("Failed to parse new size from logs: %v", err)
-				}
-				break
-			}
-		}
-	}
-    t.Logf("Parsed new size: %d", newSize) // Добавим отладочное сообщение для нового размера
-
-    // Проверяем размер в базе данных
-    rows, err := db.Query("SELECT tg_pen_id, pen_length FROM pens WHERE tg_chat_id = ?", -987654321)
-    if err != nil {
-        t.Fatalf("Error querying database: %v", err)
-    }
-    defer rows.Close()
-
-	foundUser := false
-    for rows.Next() {
-        var tgUserID, penLength int
-        if err := rows.Scan(&tgUserID, &penLength); err != nil {
-            t.Fatalf("Error scanning row: %v", err)
-        }
-        switch tgUserID {
-        case 11111111:
-            if penLength != 5 {
-                t.Errorf("expected pen_length for user 11111111 to be 5, but got %d", penLength)
-            }
-        case 22222222:
-            if penLength != 3 {
-                t.Errorf("expected pen_length for user 22222222 to be 3, but got %d", penLength)
-            }
-        case 33333333:
-            if penLength != newSize {
-                t.Errorf("expected pen_length for user 33333333 to be %d, but got %d", newSize, penLength)
-            }
-        case 44444444:
-            if penLength != 5 {
-                t.Errorf("expected pen_length for user 44444444 to be 5, but got %d", penLength)
-            }
-			foundUser = true
-        default:
-            t.Errorf("unexpected user ID %d", tgUserID)
-        }
-    }
-
-	if !foundUser {
-        t.Errorf("User 33333333 not found in database")
-    }
+    // Проверяем результат в базе данных
+    checkPenLength(t, db, 33333333, penLength)
 }
