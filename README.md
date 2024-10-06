@@ -1,6 +1,6 @@
 # Super cm Bot
 
-[![.github/workflows/test.yml](https://github.com/denis1011101/super_cm_bot/actions/workflows/test.yml/badge.svg)](https://github.com/denis1011101/super_cm_bot/actions/workflows/test.yml)
+[![.github/workflows/go-ci.yml](https://github.com/denis1011101/super_cm_bot/actions/workflows/go-ci.yml/badge.svg)](https://github.com/denis1011101/super_cm_bot/actions/workflows/go-ci.yml)
 
 Bot only for fun.
 
