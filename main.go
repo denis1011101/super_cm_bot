@@ -83,6 +83,7 @@ func main() {
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60
+	u.AllowedUpdates = append(u.AllowedUpdates, "message", "message_reaction")
 
 	updates := bot.GetUpdatesChan(u)
 
@@ -134,6 +135,12 @@ func main() {
 				}
 			} else if update.MyChatMember != nil { // Обработка добавления бота в чат
 				handlers.HandleBotAddition(update, bot)
+			}
+		}
+		if update.MessageReaction != nil {
+			chatID := update.MessageReaction.Chat.ID
+			if chatID == specificChatID {
+				handlers.HandleReaction(update, bot, db)
 			}
 		}
 	}
