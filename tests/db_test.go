@@ -7,45 +7,13 @@ import (
 	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
+	"github.com/denis1011101/super_cm_bot/tests/testutils"
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// setupTestEnvironment создает временную директорию для теста и меняет текущий рабочий каталог на эту директорию.
-// Если returnTempDir равно true, возвращает путь к временной директории и функцию для восстановления оригинального рабочего каталога.
-// Если returnTempDir равно false, возвращает только функцию для восстановления оригинального рабочего каталога.
-func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
-	// Создаём временную директорию для теста, которая будет автоматически удалена после завершения теста
-	tempDir := t.TempDir()
-
-	// Сохраняем текущий рабочий каталог
-	originalDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get current directory: %v", err)
-	}
-
-	// Меняем текущий рабочий каталог на временную директорию
-	err = os.Chdir(tempDir)
-	if err != nil {
-		t.Fatalf("Failed to change directory: %v", err)
-	}
-
-	// Функция для восстановления оригинального рабочего каталога
-	teardown := func() {
-		err := os.Chdir(originalDir)
-		if err != nil {
-			t.Fatalf("Failed to restore original directory: %v", err)
-		}
-	}
-
-	if returnTempDir {
-		return tempDir, teardown
-	}
-	return "", teardown
-}
-
 func TestInitDB(t *testing.T) {
 	// Настраиваем тестовую среду
-	_, teardown := setupTestEnvironment(t, false)
+	_, teardown := testutils.SetupTestEnvironment(t, false)
 	defer teardown()
 
 	// Инициализируем базу данных с использованием пути к файлу базы данных во временной директории
@@ -75,7 +43,7 @@ func TestInitDB(t *testing.T) {
 
 func TestStartBackupRoutine(t *testing.T) {
 	// Настраиваем тестовую среду
-	tempDir, teardown := setupTestEnvironment(t, true)
+	tempDir, teardown := testutils.SetupTestEnvironment(t, true)
 	defer teardown()
 
 	// Инициализируем базу данных с использованием пути к файлу базы данных во временной директории

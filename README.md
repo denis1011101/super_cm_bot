@@ -1,6 +1,6 @@
 # Super cm Bot
 
-[![.github/workflows/test.yml](https://github.com/denis1011101/super_cm_bot/actions/workflows/test.yml/badge.svg)](https://github.com/denis1011101/super_cm_bot/actions/workflows/test.yml)
+[![.github/workflows/go-ci.yml](https://github.com/denis1011101/super_cm_bot/actions/workflows/go-ci.yml/badge.svg)](https://github.com/denis1011101/super_cm_bot/actions/workflows/go-ci.yml)
 
 Bot only for fun.
 
@@ -21,7 +21,7 @@ go mod download
 3. Create a `.env` file based on `.env_example` and add the following:
 ```sh
 cp .env_example .env
-# Open .env and add BOT_TOKEN и SPECIFIC_CHAT_ID
+# Open .env and add BOT_TOKEN, BOT_NAME and SPECIFIC_CHAT_ID
 ```
 
 ## Run

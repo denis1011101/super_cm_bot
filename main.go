@@ -105,20 +105,25 @@ func main() {
 	// Вызов функции проверки не обнулилась ли база в отдельной горутине
 	app.CheckPenLength(db)
 
+	botName := os.Getenv("BOT_NAME")
+	if botName == "" {
+		log.Fatalf("BOT_NAME is not set in .env file")
+	}
+
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
-		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,
-		"/pen":                                handlers.HandleSpin,
-		"/giga@super_cum_lovers_bot":          handlers.ChooseGiga,
-		"/giga":                               handlers.ChooseGiga,
-		"/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
-		"/unh":                                handlers.ChooseUnhandsome,
-		"/topLength@super_cum_lovers_bot":     handlers.TopLength,
-		"/topLen":                             handlers.TopLength,
-		"/topGiga@super_cum_lovers_bot":       handlers.TopGiga,
-		"/topGiga":                            handlers.TopGiga,
-		"/topUnhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
-		"/topUnh":                             handlers.TopUnhandsome,
+		"/pen" + botName:           	handlers.HandleSpin,
+		"/pen":                         handlers.HandleSpin,
+		"/giga" + botName:          	handlers.ChooseGiga,
+		"/giga":                        handlers.ChooseGiga,
+		"/unhandsome" + botName:    	handlers.ChooseUnhandsome,
+		"/unh":                         handlers.ChooseUnhandsome,
+		"/topLength" + botName:     	handlers.TopLength,
+		"/topLen":                      handlers.TopLength,
+		"/topGiga" + botName:      		handlers.TopGiga,
+		"/topGiga":                     handlers.TopGiga,
+		"/topUnhandsome" + botName:		handlers.TopUnhandsome,
+		"/topUnh":                      handlers.TopUnhandsome,
 	}
 
 	// Обработка обновлений
