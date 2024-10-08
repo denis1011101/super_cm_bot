@@ -9,7 +9,6 @@ import (
 
 	"github.com/denis1011101/super_cm_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/joho/godotenv"
 )
 
 func checkIsSpinNotLegal(lastUpdate time.Time) bool {
