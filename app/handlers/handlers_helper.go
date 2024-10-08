@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"os"
 
 	"github.com/denis1011101/super_cm_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -15,9 +16,23 @@ func checkIsSpinNotLegal(lastUpdate time.Time) bool {
 		duration := time.Since(lastUpdate)
 		lastUpdateIsToday := compareTimesByDate(time.Now(), lastUpdate)
 
-		if duration.Hours() < 4 && lastUpdateIsToday {
-			log.Println("Spin is not legal: less than 4 hours since last update and it's today")
-			return true
+		environment := os.Getenv("ENVIRONMENT")
+		if environment == "" {
+			log.Fatalf("BOT_NAME is not set in .env file")
+		}
+
+		if environment == "development" || environment == "test" {
+			if duration.Seconds() < 4 && lastUpdateIsToday {
+				log.Println("Spin is not legal: less than 4 seconds since last update and it's today")
+				return true
+			}
+		}
+
+		if environment == "production" {
+			if duration.Hours() < 4 && lastUpdateIsToday {
+				log.Println("Spin is not legal: less than 4 hours since last update and it's today")
+				return true
+			}
 		}
 	}
 	log.Println("Spin is legal")
