@@ -6,14 +6,16 @@ import (
 	"log"
 	"strings"
 
+	"github.com/denis1011101/super_cm_bot/app"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type TopLengthStruct struct {
-	ID       int    `db:"pen_length"`
-	Data     string `db:"pen_name"`
-	Comment  string
-	Comment1 string
+	pen_length int    `db:"pen_length"`
+	pen_name   string `db:"pen_name"`
+	PenComment string
+	PenSm      string
 }
 
 // TopLength обрабатывает команду "топ длина"
@@ -43,25 +45,25 @@ func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	defer rows.Close()
 
 	var records []TopLengthStruct
-	uniqueComments := []string{"Настоящий гигачад с елдой ", "Полупокер но с большим хреном ", "Лучше быть третьим чем выступать в цирке "}
-	commonComment := "У него писунька "
-	uniqueComments1 := []string{" см 😱", " см 💪", " см 🐺"}
-	commonComment1 := " см 🤡"
+	GiantPenComment := []string{"Настоящий гигачад с елдой ", "Полупокер но с большим хреном ", "Лучше быть третьим чем выступать в цирке ", "Rуколд с "}
+	MicroPenComment := "У него писунька "
+	GiantPenSm := []string{" см 😱", " см 💪", " см 🐺", "см 🤡"}
+	MicroPenSm := " см 🤡"
 
 	// Обработка результатов запроса
 	for i := 0; rows.Next(); i++ {
 		var record TopLengthStruct
-		if err := rows.Scan(&record.ID, &record.Data); err != nil {
+		if err := rows.Scan(&record.pen_length, &record.pen_name); err != nil {
 			panic(err)
 		}
 
 		// Присвоение комментариев в зависимости от индекса
-		if i < 3 {
-			record.Comment = uniqueComments[i]
-			record.Comment1 = uniqueComments1[i]
+		if i < 4 {
+			record.PenComment = GiantPenComment[i]
+			record.PenSm = GiantPenSm[i]
 		} else {
-			record.Comment = commonComment
-			record.Comment1 = commonComment1
+			record.PenComment = MicroPenComment
+			record.PenSm = MicroPenSm
 		}
 
 		records = append(records, record)
@@ -71,14 +73,12 @@ func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	var sb strings.Builder
 	sb.WriteString("Топ 10 по длине пениса:\n")
 	for _, record := range records {
-		sb.WriteString(fmt.Sprintf("@%s: %s %d %s\n", record.Data, record.Comment, record.ID, record.Comment1))
+		sb.WriteString(fmt.Sprintf("@%s: %s %d %s\n", record.pen_name, record.PenComment, record.pen_length, record.PenSm))
 	}
 
 	message := sb.String()
 
 	// Отправка сообщения
-	msg := tgbotapi.NewMessage(chatID, message)
-	if _, err := bot.Send(msg); err != nil {
-		log.Printf("Ошибка при отправке сообщения: %v", err)
-	}
+	app.SendMessage(chatID, message, bot, update.Message.MessageID)
+
 }

@@ -6,13 +6,15 @@ import (
 	"log"
 	"strings"
 
+	"github.com/denis1011101/super_cm_bot/app"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type TopGigaStruct struct {
-	ID      int    `db:"handsome_count"`
-	Data    string `db:"pen_name"`
-	Comment string
+	handsome_count int    `db:"handsome_count"`
+	pen_name       string `db:"pen_name"`
+	TopGigaComment string
 }
 
 // TopGiga обрабатывает команду "топ гигачад"
@@ -42,22 +44,22 @@ func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	defer rows.Close()
 
 	var records []TopGigaStruct
-	uniqueComments := []string{"Альфа самец 💪😎", "Четкий пацан 🐺"}
-	commonComment := "Похож на пидора 🤡"
+	TheMostGiga := []string{"Альфа самец 💪😎", "Четкий пацан 🐺"}
+	AspiringToGiga := "Похож на пидора 🤡"
 
 	// Обработка результатов запроса
 	for i := 0; rows.Next(); i++ {
 		var record TopGigaStruct
-		if err := rows.Scan(&record.ID, &record.Data); err != nil {
+		if err := rows.Scan(&record.handsome_count, &record.pen_name); err != nil {
 			log.Printf("Error scanning row: %v", err)
 			return
 		}
 
 		// Присвоение комментариев в зависимости от индекса
 		if i < 2 {
-			record.Comment = uniqueComments[i]
+			record.TopGigaComment = TheMostGiga[i]
 		} else {
-			record.Comment = commonComment
+			record.TopGigaComment = AspiringToGiga
 		}
 
 		records = append(records, record)
@@ -67,14 +69,12 @@ func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	var sb strings.Builder
 	sb.WriteString("Топ 10 гигачадов:\n")
 	for _, record := range records {
-		sb.WriteString(fmt.Sprintf("@%s: %d раз. %s\n", record.Data, record.ID, record.Comment))
+		sb.WriteString(fmt.Sprintf("@%s: %d раз. %s\n", record.pen_name, record.handsome_count, record.TopGigaComment))
 	}
 
 	message := sb.String()
 
 	// Отправка сообщения
-	msg := tgbotapi.NewMessage(chatID, message)
-	if _, err := bot.Send(msg); err != nil {
-		log.Printf("Ошибка при отправке сообщения: %v", err)
-	}
+	app.SendMessage(chatID, message, bot, update.Message.MessageID)
+
 }

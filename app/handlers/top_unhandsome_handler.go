@@ -6,13 +6,15 @@ import (
 	"log"
 	"strings"
 
+	"github.com/denis1011101/super_cm_bot/app"
+
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 type TopUnhandsomeStruct struct {
-	ID      int    `db:"unhandsome_count"`
-	Data    string `db:"pen_name"`
-	Comment string
+	unhandsome_count  int    `db:"unhandsome_count"`
+	pen_name          string `db:"pen_name"`
+	UnhandsomeComment string
 }
 
 // Topunhandsome обрабатывает команду "топ пидор"
@@ -42,21 +44,21 @@ func TopUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	defer rows.Close()
 
 	var records []TopUnhandsomeStruct
-	uniqueComments := []string{"Самый крепкий анус на деревне 🐓", "Около пидорства 💩"}
-	commonComment := "Может даже он натурал 🤡"
+	TheMostUnhandsome := []string{"Самый крепкий анус на деревне 🐓", "Около пидорства 💩"}
+	Straight := "Может даже он натурал 🤡"
 
 	// Обработка результатов запроса
 	for i := 0; rows.Next(); i++ {
 		var record TopUnhandsomeStruct
-		if err := rows.Scan(&record.ID, &record.Data); err != nil {
+		if err := rows.Scan(&record.unhandsome_count, &record.pen_name); err != nil {
 			panic(err)
 		}
 
 		// Присвоение комментариев в зависимости от индекса
 		if i < 2 {
-			record.Comment = uniqueComments[i]
+			record.UnhandsomeComment = TheMostUnhandsome[i]
 		} else {
-			record.Comment = commonComment
+			record.UnhandsomeComment = Straight
 		}
 
 		records = append(records, record)
@@ -66,14 +68,12 @@ func TopUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	var sb strings.Builder
 	sb.WriteString("Топ 10 пидоров:\n")
 	for _, record := range records {
-		sb.WriteString(fmt.Sprintf("@%s: %d раз. %s\n", record.Data, record.ID, record.Comment))
+		sb.WriteString(fmt.Sprintf("@%s: %d раз. %s\n", record.pen_name, record.unhandsome_count, record.UnhandsomeComment))
 	}
 
 	message := sb.String()
 
 	// Отправка сообщения
-	msg := tgbotapi.NewMessage(chatID, message)
-	if _, err := bot.Send(msg); err != nil {
-		log.Printf("Ошибка при отправке сообщения: %v", err)
-	}
+	app.SendMessage(chatID, message, bot, update.Message.MessageID)
+
 }
