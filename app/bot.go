@@ -25,3 +25,21 @@ func SendReaction(chatId int64, emoji string, bot *tgbotapi.BotAPI, replyToMessa
         log.Printf("Error sending reaction to chat %d: %v", chatId, err)
     }
 }
+
+// Инициализирует клиент апи для бота
+func ConfigureBot(botToken string) (*tgbotapi.BotAPI, tgbotapi.UpdatesChannel) {
+	bot, err := tgbotapi.NewBotAPI(botToken)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	bot.Debug = true
+	log.Printf("Authorized on account %s", bot.Self.UserName)
+
+	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 60
+	u.AllowedUpdates = append(u.AllowedUpdates, "message", "message_reaction")
+
+	updates := bot.GetUpdatesChan(u)
+	return bot, updates
+}

@@ -8,8 +8,8 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// HandlepenCommand регистрирует всех пользователей кто пишет в чат
-func HandlePenCommand(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+// HandleOrdinaryMessage регистрирует всех пользователей кто пишет в чат
+func HandleOrdinaryMessage(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
 

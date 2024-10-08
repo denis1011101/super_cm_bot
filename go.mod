@@ -15,3 +15,5 @@ require gopkg.in/natefinch/lumberjack.v2 v2.2.1
 require github.com/DATA-DOG/go-sqlmock v1.5.2
 
 require github.com/jmoiron/sqlx v1.4.0
+
+require github.com/josestg/lazy v0.0.0-20230114190824-2bace4761b02

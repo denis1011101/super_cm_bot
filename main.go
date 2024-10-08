@@ -14,12 +14,13 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/natefinch/lumberjack.v2"
+	"github.com/josestg/lazy"
 )
 
 // main создаёт бота и слушает обновления
 func main() {
 	// Указываем путь к папке для логов
-	logDir := "logs"
+	const logDir = "logs"
 	logFilePath := filepath.Join(logDir, "bot.log")
 
 	// Создаем папку, если она не существует
@@ -50,6 +51,9 @@ func main() {
 	// Настраиваем логгер для записи в файл
 	log.SetOutput(logFile)
 
+	// Пример логирования
+	log.Println("This is a log message")
+
 	err = godotenv.Load()
 	if err != nil {
 		log.Fatalf("Error loading .env file")
@@ -60,32 +64,7 @@ func main() {
 		log.Fatalf("BOT_TOKEN is not set in .env file")
 	}
 
-	bot, err := tgbotapi.NewBotAPI(botToken)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	bot.Debug = true
-	log.Printf("Authorized on account %s", bot.Self.UserName)
-
-	specificChatIDStr := os.Getenv("SPECIFIC_CHAT_ID")
-	if specificChatIDStr == "" {
-		log.Fatalf("SPECIFIC_CHAT_ID is not set in .env file")
-	}
-
-	specificChatID, err := strconv.ParseInt(specificChatIDStr, 10, 64)
-	if err != nil {
-		log.Fatalf("Invalid SPECIFIC_CHAT_ID: %v", err)
-	}
-
-	// Пример логирования
-	log.Println("This is a log message")
-
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-	u.AllowedUpdates = append(u.AllowedUpdates, "message", "message_reaction")
-
-	updates := bot.GetUpdatesChan(u)
+	bot, updatesChannel := app.ConfigureBot(botToken)
 
 	db, err := app.InitDB()
 	if err != nil {
@@ -123,25 +102,64 @@ func main() {
 	}
 
 	// Обработка обновлений
-	for update := range updates {
-		if update.Message != nil {
-			chatID := update.Message.Chat.ID
-			if chatID == specificChatID {
-				// Обработка команд
-				if handler, exists := commandHandlers[update.Message.Text]; exists {
-					handler(update, bot, db)
-				} else { // Обработка обычных сообщений
-					handlers.HandlePenCommand(update, bot, db)
-				}
-			} else if update.MyChatMember != nil { // Обработка добавления бота в чат
-				handlers.HandleBotAddition(update, bot)
-			}
+	for update := range updatesChannel {
+		needHandleCommand, commandHandler := isNeedHandleCommand(update, commandHandlers)
+		if needHandleCommand {
+			commandHandler(update, bot, db)
+			continue
 		}
-		if update.MessageReaction != nil {
-			chatID := update.MessageReaction.Chat.ID
-			if chatID == specificChatID {
-				handlers.HandleReaction(update, bot, db)
-			}
+
+		if isNeedHandleReaction(update) {
+			handlers.HandleReaction(update.MessageReaction, bot, db)
+			continue
+		}
+
+		if isNeedHandleBotAddition(update) {
+			handlers.HandleBotAddition(update, bot)
+			continue
+		}
+
+		if isHandleOrdinaryMessage(update) {
+			handlers.HandleOrdinaryMessage(update, bot, db)
+			continue
 		}
 	}
+}
+
+var specificChatIDFactory = lazy.New(getSpecificChatId)
+
+func isNeedHandleCommand(update tgbotapi.Update, commandHandlers map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB)) (bool, func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB)) {
+	if update.Message != nil && update.Message.Chat.ID == specificChatIDFactory.Value() {
+		if handler, exists := commandHandlers[update.Message.Text]; exists {
+			return true, handler
+		}
+	}
+	return false, nil
+}
+
+func isNeedHandleReaction(update tgbotapi.Update) bool {
+	return update.MessageReaction != nil && update.MessageReaction.Chat.ID == specificChatIDFactory.Value()
+}
+
+func isNeedHandleBotAddition(update tgbotapi.Update) bool {
+	return update.MyChatMember != nil && update.Message != nil
+}
+
+func isHandleOrdinaryMessage(update tgbotapi.Update) bool {
+	return update.Message != nil
+}
+
+func getSpecificChatId() (int64, error) {
+	specificChatIDStr := os.Getenv("SPECIFIC_CHAT_ID")
+	if specificChatIDStr == "" {
+		log.Fatalf("SPECIFIC_CHAT_ID is not set in .env file")
+		return 0, nil
+	}
+
+	specificChatID, err := strconv.ParseInt(specificChatIDStr, 10, 64)
+	if err != nil {
+		log.Fatalf("Invalid SPECIFIC_CHAT_ID: %v", err)
+		return 0, err
+	}
+	return specificChatID, nil
 }
