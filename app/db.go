@@ -10,7 +10,10 @@ import (
 	"time"
 	"sort"
 
-	_ "github.com/mattn/go-sqlite3"
+    _ "github.com/mattn/go-sqlite3"
+    "github.com/golang-migrate/migrate/v4"
+    sqlite3migrations "github.com/golang-migrate/migrate/v4/database/sqlite3"
+    _ "github.com/golang-migrate/migrate/v4/source/file"
 )
 
 const sqliteTimestampLayout = "2006-01-02 15:04:05Z07:00"
@@ -41,82 +44,33 @@ func InitDB() (*sql.DB, error) {
 		}
 	}
 
-	// Проверка, существует ли файл базы данных
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		// Файл не существует, создаём базу данных и таблицу
-		db, err := sql.Open("sqlite3", dbPath)
-		if err != nil {
-			log.Printf("Error opening database: %v", err)
-			return nil, err
-		}
-
-		createTableQuery := `
-		CREATE TABLE IF NOT EXISTS pens (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			pen_name TEXT,
-			tg_pen_id INTEGER UNIQUE,
-			tg_chat_id INTEGER,
-			pen_length INTEGER,
-			pen_last_update_at TIMESTAMP,
-			handsome_count INTEGER,
-			handsome_last_update_at TIMESTAMP,
-			unhandsome_count INTEGER,
-			unhandsome_last_update_at TIMESTAMP
-		);`
-		_, err = db.Exec(createTableQuery)
-		if err != nil {
-			db.Close() // Закрываем базу данных при ошибке
-			log.Printf("Error creating table: %v", err)
-			return nil, err
-		}
-
-		// Создание индекса для pen_length
-		createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
-		_, err = db.Exec(createIndexQuery)
-		if err != nil {
-			db.Close() // Закрываем базу данных при ошибке
-			log.Printf("Error creating index: %v", err)
-			return nil, err
-		}
-
-        // Создание индекса для tg_pen_id
-        createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
-        _, err = db.Exec(createIndexQuery)
-        if err != nil {
-            db.Close() // Закрываем базу данных при ошибке
-            log.Printf("Error creating index: %v", err)
-            return nil, err
-        }
-
-		log.Println("Database and table and index created successfully")
-		return db, nil
-	}
-
-	// Файл существует, просто открываем базу данных
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		log.Printf("Error opening database: %v", err)
 		return nil, err
 	}
 
-	// Создание индекса для pen_length, если он еще не существует
-	createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
-	_, err = db.Exec(createIndexQuery)
+	config := sqlite3migrations.Config {
+		MigrationsTable: "migrations",
+		DatabaseName: dbPath,
+	}
+
+	driver, err := sqlite3migrations.WithInstance(db, &config)
 	if err != nil {
-		log.Printf("Error creating index: %v", err)
+		log.Printf("%v", err)
 		return nil, err
 	}
 
-	// Создание индекса для tg_pen_id
-	createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
-	_, err = db.Exec(createIndexQuery)
+    m, err := migrate.NewWithDatabaseInstance("file://./app/db/migrations", "sqlite3", driver)
 	if err != nil {
-		db.Close() // Закрываем базу данных при ошибке
-		log.Printf("Error creating index: %v", err)
+		log.Printf("%v", err)
 		return nil, err
 	}
-
-	log.Println("Index created successfully in existing database")
+	
+    if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		log.Printf("%v", err)
+		return nil, err
+	}
 
 	// Установка режима журнала WAL
 	_, err = db.Exec("PRAGMA journal_mode = WAL;")

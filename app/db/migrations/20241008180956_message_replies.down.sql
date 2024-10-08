@@ -1,0 +1,3 @@
+DROP INDEX idx_message_replies_tg_pen_id
+
+DROP TABLE message_replies
