@@ -21,7 +21,7 @@ go mod download
 3. Create a `.env` file based on `.env_example` and add the following:
 ```sh
 cp .env_example .env
-# Open .env and add BOT_TOKEN, BOT_NAME and SPECIFIC_CHAT_ID
+# Open .env and add BOT_TOKEN и SPECIFIC_CHAT_ID
 ```
 
 ## Run
