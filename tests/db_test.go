@@ -36,7 +36,7 @@ func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 	}
 
 	// Копируем файлы миграции во временную директорию
-    projectBaseDir := strings.SplitAfter(originalDir, "super_cum_bot")[0]
+    projectBaseDir := strings.SplitAfter(originalDir, "super_cm_bot")[0]
 	log.Println("project base dir: " + projectBaseDir)
 	migrationsDir := filepath.Join(projectBaseDir, "app", "db", "migrations")
 	log.Println("migrations dir: " + migrationsDir)
