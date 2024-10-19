@@ -36,21 +36,13 @@ func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 	}
 
 	// Копируем файлы миграции во временную директорию
-    projectBaseDir := strings.SplitAfter(originalDir, "super_cm_bot")[0]
-	log.Println("project base dir: " + projectBaseDir)
+    projectBaseDir := getBaseDir(originalDir)
 	migrationsDir := filepath.Join(projectBaseDir, "app", "db", "migrations")
-	log.Println("migrations dir: " + migrationsDir)
 	copyDir(migrationsDir, "./app/db/migrations")
-	log.Println("=====Base project tree=====")
-	filepath.Walk(projectBaseDir, func(name string, info os.FileInfo, err error) error {
-		log.Println(name)
-		return nil
-	})
-	log.Println("=====Tests tree=====")
-	filepath.Walk(tempDir, func(name string, info os.FileInfo, err error) error {
-		log.Println(name)
-		return nil
-	})
+	log.Println("===== Base project tree =====")
+	printDirTree(projectBaseDir)
+	log.Println("===== Tests tree =====")
+	printDirTree(tempDir)
 
 	// Функция для восстановления оригинального рабочего каталога
 	teardown := func() {
@@ -222,4 +214,39 @@ func copyDir(src, dst string) error {
 
 		return nil
 	})
+}
+
+func printDirTree(path string) {
+	filepath.Walk(path, func(name string, info os.FileInfo, err error) error {
+		log.Println(name)
+		return nil
+	})
+}
+
+// Получение базовой дириктории, поиск по имени репозитория
+// В ci в пути дублируется папка с репозиторем, поэтому ищется максимально длинная дириктория
+// Пример /home/runner/work/super_cm_bot/super_cm_bot/tests -> /home/runner/work/super_cm_bot/super_cm_bot
+// Пример c:\Users\Alexander\RiderProjects\super_cm_bot\tests -> c:\Users\Alexander\RiderProjects\super_cm_bot
+func getBaseDir(path string) string {
+	splitedDir := strings.SplitAfter(path, "super_cm_bot")
+	
+	if (len(splitedDir) > 1) {
+		baseDir := splitedDir[0]
+		index := 1
+
+		for index < len(splitedDir) {
+			if (strings.Contains(splitedDir[index], "super_cm_bot")) {
+				baseDir = baseDir + splitedDir[index]
+			} else {
+				break
+			}
+			index++
+		}
+
+		return baseDir
+	} else if len(splitedDir) == 1 {
+		return splitedDir[0]
+	} else {
+		return ""
+	}
 }
