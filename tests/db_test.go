@@ -21,7 +21,7 @@ func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 	// Создаём временную директорию для теста, которая будет автоматически удалена после завершения теста
 	tempDir := t.TempDir()
 
-	log.Println(tempDir)
+	log.Println("temp dir: " + tempDir)
 
 	// Сохраняем текущий рабочий каталог
 	originalDir, err := os.Getwd()
@@ -37,8 +37,14 @@ func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 
 	// Копируем файлы миграции во временную директорию
     projectBaseDir := strings.SplitAfter(originalDir, "super_cum_bot")[0]
-	migrationsDir := projectBaseDir + "//app//db//migrations"
+	log.Println("project base dir: " + projectBaseDir)
+	migrationsDir := filepath.Join(projectBaseDir, "app", "db", "migrations")
+	log.Println("migrations dir: " + migrationsDir)
 	copyDir(migrationsDir, "./app/db/migrations")
+	filepath.Walk(tempDir, func(name string, info os.FileInfo, err error) error {
+		log.Println(name)
+		return nil
+	})
 
 	// Функция для восстановления оригинального рабочего каталога
 	teardown := func() {
