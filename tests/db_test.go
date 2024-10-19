@@ -1,7 +1,11 @@
 package tests
 
 import (
+	"io"
+	"log"
 	"os"
+	filepath "path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +21,8 @@ func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 	// Создаём временную директорию для теста, которая будет автоматически удалена после завершения теста
 	tempDir := t.TempDir()
 
+	log.Println(tempDir)
+
 	// Сохраняем текущий рабочий каталог
 	originalDir, err := os.Getwd()
 	if err != nil {
@@ -28,6 +34,11 @@ func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 	if err != nil {
 		t.Fatalf("Failed to change directory: %v", err)
 	}
+
+	// Копируем файлы миграции во временную директорию
+    projectBaseDir := strings.SplitAfter(originalDir, "super_cum_bot")[0]
+	migrationsDir := projectBaseDir + "//app//db//migrations"
+	copyDir(migrationsDir, "./app/db/migrations")
 
 	// Функция для восстановления оригинального рабочего каталога
 	teardown := func() {
@@ -149,4 +160,54 @@ func TestStartBackupRoutine(t *testing.T) {
 	if countDuring != 5 {
 		t.Fatalf("Expected 10 rows to be inserted during goroutine, but got %d", countDuring)
 	}
+}
+
+func copyDir(src, dst string) error {
+	// Create the destination directory if it doesn't exist
+	err := os.MkdirAll(dst, 0755)
+	if err != nil {
+		return err
+	}
+
+	// Walk through the source directory
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Calculate the destination path
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dst, relPath)
+
+		// If it's a directory, create it
+		if info.IsDir() {
+			err := os.MkdirAll(dstPath, 0755)
+			if err != nil {
+				return err
+			}
+		} else {
+			// If it's a file, copy it
+			srcFile, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer srcFile.Close()
+
+			dstFile, err := os.Create(dstPath)
+			if err != nil {
+				return err
+			}
+			defer dstFile.Close()
+
+			_, err = io.Copy(dstFile, srcFile)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
