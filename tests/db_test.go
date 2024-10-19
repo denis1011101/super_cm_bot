@@ -41,6 +41,12 @@ func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 	migrationsDir := filepath.Join(projectBaseDir, "app", "db", "migrations")
 	log.Println("migrations dir: " + migrationsDir)
 	copyDir(migrationsDir, "./app/db/migrations")
+	log.Println("=====Base project tree=====")
+	filepath.Walk(projectBaseDir, func(name string, info os.FileInfo, err error) error {
+		log.Println(name)
+		return nil
+	})
+	log.Println("=====Tests tree=====")
 	filepath.Walk(tempDir, func(name string, info os.FileInfo, err error) error {
 		log.Println(name)
 		return nil
