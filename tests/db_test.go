@@ -36,7 +36,7 @@ func setupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 	}
 
 	// Копируем файлы миграции во временную директорию
-    projectBaseDir := getBaseDir(originalDir)
+	projectBaseDir := getBaseDir(originalDir)
 	migrationsDir := filepath.Join(projectBaseDir, "app", "db", "migrations")
 	copyDir(migrationsDir, "./app/db/migrations")
 	log.Println("===== Base project tree =====")
@@ -229,13 +229,13 @@ func printDirTree(path string) {
 // Пример c:\Users\Alexander\RiderProjects\super_cm_bot\tests -> c:\Users\Alexander\RiderProjects\super_cm_bot
 func getBaseDir(path string) string {
 	splitedDir := strings.SplitAfter(path, "super_cm_bot")
-	
-	if (len(splitedDir) > 1) {
+
+	if len(splitedDir) > 1 {
 		baseDir := splitedDir[0]
 		index := 1
 
 		for index < len(splitedDir) {
-			if (strings.Contains(splitedDir[index], "super_cm_bot")) {
+			if strings.Contains(splitedDir[index], "super_cm_bot") {
 				baseDir = baseDir + splitedDir[index]
 			} else {
 				break

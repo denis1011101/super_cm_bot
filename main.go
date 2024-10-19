@@ -12,9 +12,9 @@ import (
 	"github.com/denis1011101/super_cm_bot/app/handlers"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
+	"github.com/josestg/lazy"
 	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/natefinch/lumberjack.v2"
-	"github.com/josestg/lazy"
 )
 
 // main создаёт бота и слушает обновления

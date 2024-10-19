@@ -1,97 +1,30 @@
 package app
 
 import (
-	"database/sql"
-	"fmt"
-	"log"
-	"os"
-	"path/filepath"
-	"sync"
-	"time"
-	"sort"
+    "database/sql"
+    "fmt"
+    "log"
+    "os"
+    "path/filepath"
+    "sort"
+    "sync"
+    "time"
 
-    _ "github.com/mattn/go-sqlite3"
-    "github.com/golang-migrate/migrate/v4"
-    sqlite3migrations "github.com/golang-migrate/migrate/v4/database/sqlite3"
     _ "github.com/golang-migrate/migrate/v4/source/file"
+    _ "github.com/mattn/go-sqlite3"
 )
 
 const sqliteTimestampLayout = "2006-01-02 15:04:05Z07:00"
 
-// InitDB инициализирует базу данных
-func InitDB() (*sql.DB, error) {
-	dbDir := "./data"
-
-	// Проверка, существует ли директория базы данных
-	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
-		// Директория не существует, создаём её
-		err = os.MkdirAll(dbDir, os.ModePerm)
-		if err != nil {
-			log.Printf("Error creating directory: %v", err)
-			return nil, err
-		}
-	}
-
-	dbPath := "./data/pens.db"
-
-	// Проверка, существует ли директория базы данных
-	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
-		// Директория не существует, создаём её
-		err = os.MkdirAll(dbDir, os.ModePerm)
-		if err != nil {
-			log.Printf("Error creating directory: %v", err)
-			return nil, err
-		}
-	}
-
-	db, err := sql.Open("sqlite3", dbPath)
-	if err != nil {
-		log.Printf("Error opening database: %v", err)
-		return nil, err
-	}
-
-	config := sqlite3migrations.Config {
-		MigrationsTable: "migrations",
-		DatabaseName: dbPath,
-	}
-
-	driver, err := sqlite3migrations.WithInstance(db, &config)
-	if err != nil {
-		log.Printf("%v", err)
-		return nil, err
-	}
-
-    m, err := migrate.NewWithDatabaseInstance("file://./app/db/migrations", "sqlite3", driver)
-	if err != nil {
-		log.Printf("%v", err)
-		return nil, err
-	}
-	
-    if err := m.Up(); err != nil && err != migrate.ErrNoChange {
-		log.Printf("%v", err)
-		return nil, err
-	}
-
-	// Установка режима журнала WAL
-	_, err = db.Exec("PRAGMA journal_mode = WAL;")
-	if err != nil {
-		log.Printf("Error setting journal_mode: %v", err)
-		return nil, err
-	}
-
-	log.Println("Database opened successfully")
-	return db, nil
-}
-
 // GetUserIDByUsername получает ID пользователя по его username
 func GetUserIDByUsername(db *sql.DB, username string) (int, error) {
-	var userID int
-	err := db.QueryRow("SELECT tg_pen_id FROM pens WHERE pen_name = ?", username).Scan(&userID)
-	if err != nil {
-		return 0, err
-	}
-	log.Printf("User ID retrieved successfully for username: %s, user ID: %d", username, userID)
-	return userID, nil
+    var userID int
+    err := db.QueryRow("SELECT tg_pen_id FROM pens WHERE pen_name = ?", username).Scan(&userID)
+    if err != nil {
+        return 0, err
+    }
+    log.Printf("User ID retrieved successfully for username: %s, user ID: %d", username, userID)
+    return userID, nil
 }
 
 // GetPenNames получает все значения pen_name из таблицы pens
@@ -454,4 +387,25 @@ func UserExists(db *sql.DB, userID int64, chatID int64) (bool, error) {
         return false, err
     }
     return exists, nil
+}
+
+// Проверка наличия ответа на реакцию пользователя
+func ReactionReplyExists(db *sql.DB, chatID int64, userID int64, messageID int) (bool, error) {
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM message_replies WHERE tg_pen_id = ? AND tg_chat_id = ? AND message_id = ?)`
+	err := db.QueryRow(query, userID, chatID, messageID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// Запись отметки об отправке реакции на сообщение
+func MarkMessageAsReply(db *sql.DB, chatID int64, userID int64, messageID int, replyType string) error {
+	query := `INSERT INTO message_replies (tg_pen_id, tg_chat_id, message_id, reply_type) VALUES (?, ?, ?, ?)`
+	_, err := db.Exec(query, userID, chatID, messageID, replyType)
+	if err != nil {
+		return err
+	}
+	return nil
 }
