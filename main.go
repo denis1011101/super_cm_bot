@@ -113,12 +113,14 @@ func main() {
 		"/giga":                               handlers.ChooseGiga,
 		"/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
 		"/unh":                                handlers.ChooseUnhandsome,
-		"/topLength@super_cum_lovers_bot":     handlers.TopLength,
-		"/topLen":                             handlers.TopLength,
-		"/topGiga@super_cum_lovers_bot":       handlers.TopGiga,
-		"/topGiga":                            handlers.TopGiga,
-		"/topUnhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
-		"/topUnh":                             handlers.TopUnhandsome,
+		"/toppens":							   handlers.TopLength,
+		"/toppens@super_cum_lovers_bot":	   handlers.TopLength,
+		"/toplength@super_cum_lovers_bot":     handlers.TopLength,
+		"/toplen":                             handlers.TopLength,
+		"/topgiga@super_cum_lovers_bot":       handlers.TopGiga,
+		"/topgiga":                            handlers.TopGiga,
+		"/topunhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
+		"/topunh":                             handlers.TopUnhandsome,
 	}
 
 	// Обработка обновлений
