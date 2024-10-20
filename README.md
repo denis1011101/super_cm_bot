@@ -31,12 +31,22 @@ cp .env_example .env
 go run main.go
 ```
 
-## Testing
+## Automation testing
 
 1. Run tests:
 ```sh
-go test ./tests
+go test -count=1 ./tests
 ```
+
+## Manual testing
+
+1. Go to [@BotFather](https://t.me/BotFather)
+2. Create test bot
+3. Create test group
+4. Add test bot to test group
+5. Get group_id https://stackoverflow.com/questions/32423837/telegram-bot-how-to-get-a-group-chat-id
+6. Put .env
+7. Run bot
 
 ## Usage
 
