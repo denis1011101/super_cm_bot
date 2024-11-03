@@ -13,21 +13,14 @@ import (
 func checkIsSpinNotLegal(lastUpdate time.Time) bool {
 	if !lastUpdate.IsZero() {
 		duration := time.Since(lastUpdate)
-		lastUpdateIsToday := compareTimesByDate(time.Now(), lastUpdate)
 
-		if duration.Hours() < 4 && lastUpdateIsToday {
-			log.Println("Spin is not legal: less than 4 hours since last update and it's today")
+		if duration.Hours() < 4 {
+			log.Println("Spin is not legal: less than 4 hours since last update")
 			return true
 		}
 	}
 	log.Println("Spin is legal")
 	return false
-}
-
-func compareTimesByDate(a, b time.Time) bool {
-	return a.Year() == b.Year() &&
-		a.Month() == b.Month() &&
-		a.Day() == b.Day()
 }
 
 func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendWelcomeMessage bool) {
@@ -60,4 +53,14 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 	}
 
 	fmt.Println("User registered in bot")
+}
+
+// isUserJoinEvent проверяет, является ли сообщение событием входа пользователя в чат
+func isUserJoinEvent(update tgbotapi.Update) bool {
+    return update.Message.NewChatMembers != nil
+}
+
+// isUserLeaveEvent проверяет, является ли сообщение событием выхода пользователя из чата
+func isUserLeaveEvent(update tgbotapi.Update) bool {
+    return update.Message.LeftChatMember != nil
 }

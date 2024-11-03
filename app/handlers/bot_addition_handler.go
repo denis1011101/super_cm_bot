@@ -7,6 +7,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// TODO: fix it
 func HandleBotAddition(update tgbotapi.Update, bot *tgbotapi.BotAPI) {
 	if update.MyChatMember.NewChatMember.User.UserName == bot.Self.UserName {
 		if update.MyChatMember.Chat.IsGroup() || update.MyChatMember.Chat.IsSuperGroup() {

@@ -19,9 +19,10 @@ func HandlePenCommand(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		log.Printf("Error checking if user exists: %v", err)
 		return
 	}
-
-	if !exists {
-		// Регистрация пользователя, если он не найден в базе данных
+	
+	// Регистрация пользователя, если он не найден в базе данных и это не событие входа пользователя в чат
+	// или если он не найден в базе данных и вступил в чат
+	if !exists && (!isUserLeaveEvent(update) || isUserJoinEvent(update)) {
 		log.Printf("User not found in database, registering: %v", userID)
 		registerBot(update, bot, db, true)
 	}
