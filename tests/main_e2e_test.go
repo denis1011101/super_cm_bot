@@ -282,4 +282,67 @@ func TestBotE2E(t *testing.T) {
 			t.Fatalf("Error extracting top list: %v", err)
 		}
 	})
+
+    // Тестирование регистрации пользователя при вступлении в чат
+    t.Run("UserJoinEventRegistration", func(t *testing.T) {
+        t.Log("Testing user registration on join event...")
+        update := tgbotapi.Update{
+            UpdateID: 1,
+            Message: &tgbotapi.Message{
+                Chat: &tgbotapi.Chat{
+                    ID: specificChatID,
+                },
+                From: &tgbotapi.User{
+                    ID: 55555555,
+                    UserName: "testuser",
+                },
+                NewChatMembers: []tgbotapi.User{
+                    {
+                        ID: 55555555,
+                        UserName: "testuser",
+                    },
+                },
+            },
+        }
+
+        updates <- update
+        time.Sleep(1 * time.Second)
+
+        testutils.CheckPenLength(t, db, 55555555, &specificChatID, 5)
+    })
+
+    // Тестирование отсутствия регистрации при покидании чата
+    t.Run("UserLeaveEventNoRegistration", func(t *testing.T) {
+        t.Log("Testing no registration on leave event...")
+        update := tgbotapi.Update{
+            UpdateID: 2,
+            Message: &tgbotapi.Message{
+                Chat: &tgbotapi.Chat{
+                    ID: specificChatID,
+                },
+                From: &tgbotapi.User{
+                    ID: 66666666,
+                    UserName: "testuser",
+                },
+                LeftChatMember: &tgbotapi.User{
+                    ID: 66666666,
+                    UserName: "testuser", 
+                },
+            },
+        }
+
+        updates <- update
+        time.Sleep(1 * time.Second)
+
+        var penLength int
+        err := db.QueryRow(
+            "SELECT pen_length FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?",
+            66666666,
+            specificChatID,
+        ).Scan(&penLength)
+        
+        if err == nil {
+            t.Fatalf("User should not be registered on leave event")
+        }
+    })
 }
