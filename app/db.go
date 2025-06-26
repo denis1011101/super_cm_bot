@@ -140,25 +140,25 @@ func GetUserIDByUsername(db *sql.DB, username string) (int, error) {
 	return userID, nil
 }
 
-// GetPenNames получает все значения pen_name из таблицы pens
+// GetPenNames получает все значения pen_name из таблицы pens для активных пользователей
 func GetPenNames(db *sql.DB, chatID int64) ([]Member, error) {
-	rows, err := db.Query("SELECT tg_pen_id, pen_name FROM pens WHERE tg_chat_id = ?", chatID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+    rows, err := db.Query("SELECT tg_pen_id, pen_name FROM pens WHERE tg_chat_id = ? AND is_active = TRUE", chatID)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
 
-	var members []Member
-	for rows.Next() {
-		var member Member
-		err := rows.Scan(&member.ID, &member.Name)
-		if err != nil {
-			return nil, err
-		}
-		members = append(members, member)
-	}
-	log.Printf("Members list: %v", members)
-	return members, nil
+    var members []Member
+    for rows.Next() {
+        var member Member
+        err := rows.Scan(&member.ID, &member.Name)
+        if err != nil {
+            return nil, err
+        }
+        members = append(members, member)
+    }
+    log.Printf("Active members list: %v", members)
+    return members, nil
 }
 
 // GetUserPen получает значения pen_length и pen_last_update_at из базы данных
@@ -175,14 +175,14 @@ func GetUserPen(db *sql.DB, userID int64, chatID int64) (Pen, error) {
 	return Pen{currentSize, lastUpdate.Time}, err
 }
 
-// UpdateUserPen обновляет значения pen_length и pen_last_update_at в базе данных
+// UpdateUserPen обновляет значения pen_length, pen_last_update_at и отмечает пользователя как активного
 func UpdateUserPen(db *sql.DB, userID int64, chatID int64, newSize int) {
-	_, err := db.Exec("UPDATE pens SET pen_length = ?, pen_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
-	if err != nil {
-		log.Printf("Error updating pen size and last update time: %v", err)
-	} else {
-		log.Printf("Successfully updated pen size and last update time for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
-	}
+    _, err := db.Exec("UPDATE pens SET pen_length = ?, pen_last_update_at = ?, is_active = TRUE WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
+    if err != nil {
+        log.Printf("Error updating pen size, last update time and active status: %v", err)
+    } else {
+        log.Printf("Successfully updated pen size, last update time and active status for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+    }
 }
 
 // GetGigaLastUpdateTime получает время последнего обновления для команды /giga
