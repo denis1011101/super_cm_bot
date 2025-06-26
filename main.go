@@ -110,6 +110,9 @@ func main() {
 	// Вызов функции проверки не обнулилась ли база в отдельной горутине
 	app.CheckPenLength(db)
 
+	// Запуск еженедельного архивирования неактивных пользователей
+    app.StartArchiveRoutine(db)
+
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
 		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,
