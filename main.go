@@ -96,6 +96,11 @@ func main() {
 		}
 	}()
 
+	// Запускаем миграции
+	if err := app.RunMigrations(db); err != nil {
+		log.Fatal("Ошибка при выполнении миграций: ", err)
+	}
+
 	// Создаем мьютекс для блокировки базы данных
 	mutex := &sync.Mutex{}
 
