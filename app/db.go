@@ -88,8 +88,16 @@ func InitDB() (*sql.DB, error) {
             return nil, err
         }
 
-		log.Println("Database and table and index created successfully")
-		return db, nil
+        // Запускаем миграции
+        err = RunMigrations(db)
+        if err != nil {
+            db.Close()
+            log.Printf("Error running migrations: %v", err)
+            return nil, err
+        }
+
+        log.Println("Database and table and index created successfully")
+        return db, nil
 	}
 
 	// Файл существует, просто открываем базу данных
@@ -117,6 +125,14 @@ func InitDB() (*sql.DB, error) {
 	}
 
 	log.Println("Index created successfully in existing database")
+
+    // Запускаем миграции для существующей базы данных
+    err = RunMigrations(db)
+    if err != nil {
+        db.Close()
+        log.Printf("Error running migrations: %v", err)
+        return nil, err
+    }
 
 	// Установка режима журнала WAL
 	_, err = db.Exec("PRAGMA journal_mode = WAL;")
