@@ -18,15 +18,15 @@ import (
 )
 
 func TestMain(m *testing.M) {
-    // Установка фиктивного токена
-    if err := os.Setenv("BOT_TOKEN", "fake-token"); err != nil {
-        log.Fatalf("Failed to set BOT_TOKEN: %v", err)
-    }
-    log.Println("Используется фиктивный токен.")
+	// Установка фиктивного токена
+	if err := os.Setenv("BOT_TOKEN", "fake-token"); err != nil {
+		log.Fatalf("Failed to set BOT_TOKEN: %v", err)
+	}
+	log.Println("Используется фиктивный токен.")
 
-    // Запуск тестов
-    code := m.Run()
-    os.Exit(code)
+	// Запуск тестов
+	code := m.Run()
+	os.Exit(code)
 }
 
 func TestBotE2E(t *testing.T) {
@@ -39,11 +39,11 @@ func TestBotE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
-    defer func() {
-        if err := db.Close(); err != nil {
-            t.Fatalf("Error closing database: %v", err)
-        }
-    }()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("Error closing database: %v", err)
+		}
+	}()
 
 	// Проверка, что таблица создана
 	var tableName string
@@ -66,12 +66,12 @@ func TestBotE2E(t *testing.T) {
 	}
 
 	// Создаем мок-сервер для API Telegram
-    mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-        w.WriteHeader(http.StatusOK)
-        if _, err := w.Write([]byte(`{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)); err != nil {
-            t.Fatalf("mockServer failed to write response: %v", err)
-        }
-    }))
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte(`{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)); err != nil {
+			t.Fatalf("mockServer failed to write response: %v", err)
+		}
+	}))
 	defer mockServer.Close()
 
 	// Создаем мок-объект бота с фиктивным токеном и перенаправляем запросы на мок-сервер
@@ -132,29 +132,29 @@ func TestBotE2E(t *testing.T) {
 		testutils.CheckPenLength(t, db, 44444444, nil, 5)
 	})
 
-    // Тестирование команды /pen и регистрации нового пользователя
-    t.Run("PenCommandAndRegistration", func(t *testing.T) {
-        t.Log("Testing /pen command and registration...")
-        // Отправляем команду /pen
-        testutils.SendMessage(t, updates, specificChatID, 33333333, "/pen")
+	// Тестирование команды /pen и регистрации нового пользователя
+	t.Run("PenCommandAndRegistration", func(t *testing.T) {
+		t.Log("Testing /pen command and registration...")
+		// Отправляем команду /pen
+		testutils.SendMessage(t, updates, specificChatID, 33333333, "/pen")
 
-        // Даем время боту обработать команду
-        time.Sleep(1 * time.Second)
+		// Даем время боту обработать команду
+		time.Sleep(1 * time.Second)
 
-        // Извлекаем длину из логов
-        penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/pen")
-        if err != nil {
-            t.Fatalf("Error extracting pen info: %v", err)
-        }
-        penLength := penInfo.NewSize
+		// Извлекаем длину из логов
+		penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/pen")
+		if err != nil {
+			t.Fatalf("Error extracting pen info: %v", err)
+		}
+		penLength := penInfo.NewSize
 
-        // Проверяем результат в базе данных
-        testutils.CheckPenLength(t, db, 33333333, nil, penLength)
+		// Проверяем результат в базе данных
+		testutils.CheckPenLength(t, db, 33333333, nil, penLength)
 
-        // Проверяем результат остальных пользователей в базе данных
-        testutils.CheckPenLength(t, db, 11111111, nil, 5)
-        testutils.CheckPenLength(t, db, 22222222, nil, 3)
-    })
+		// Проверяем результат остальных пользователей в базе данных
+		testutils.CheckPenLength(t, db, 11111111, nil, 5)
+		testutils.CheckPenLength(t, db, 22222222, nil, 3)
+	})
 
 	// Тестирование команды /pen в течение 4 часов
 	t.Run("PenCommandWithin4Hours", func(t *testing.T) {
@@ -176,104 +176,104 @@ func TestBotE2E(t *testing.T) {
 		testutils.CheckPenLength(t, db, 33333333, nil, penLength)
 	})
 
-    // Тестирование команды /pen после 4 часов
-    t.Run("PenCommandAfter4Hours", func(t *testing.T) {
-        t.Log("Testing /pen command after 4 hours...")
-        // Обновляем время последнего обновления
-        testutils.ChangeData(t, db, 33333333, specificChatID, map[string]interface{}{"pen_last_update_at": time.Now().Add(-4 * time.Hour)})
+	// Тестирование команды /pen после 4 часов
+	t.Run("PenCommandAfter4Hours", func(t *testing.T) {
+		t.Log("Testing /pen command after 4 hours...")
+		// Обновляем время последнего обновления
+		testutils.ChangeData(t, db, 33333333, specificChatID, map[string]interface{}{"pen_last_update_at": time.Now().Add(-4 * time.Hour)})
 
-        // Отправляем команду /pen
-        testutils.SendMessage(t, updates, specificChatID, 33333333, "/pen")
+		// Отправляем команду /pen
+		testutils.SendMessage(t, updates, specificChatID, 33333333, "/pen")
 
-        // Даем время боту обработать команду
-        time.Sleep(1 * time.Second)
+		// Даем время боту обработать команду
+		time.Sleep(1 * time.Second)
 
-        // Извлекаем длину из логов
-        penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/pen")
-        if err != nil {
-            t.Fatalf("Error extracting pen info: %v", err)
-        }
-        penLength := penInfo.NewSize
+		// Извлекаем длину из логов
+		penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/pen")
+		if err != nil {
+			t.Fatalf("Error extracting pen info: %v", err)
+		}
+		penLength := penInfo.NewSize
 
-        // Проверяем результат в базе данных
-        testutils.CheckPenLength(t, db, 33333333, nil, penLength)
-    })
+		// Проверяем результат в базе данных
+		testutils.CheckPenLength(t, db, 33333333, nil, penLength)
+	})
 
-    // Тестирование команды /giga
-    t.Run("GigaCommand", func(t *testing.T) {
-        t.Log("Testing /giga command...")
-        // Отправляем команду /giga
-        testutils.SendMessage(t, updates, specificChatID, 33333333, "/giga")
+	// Тестирование команды /giga
+	t.Run("GigaCommand", func(t *testing.T) {
+		t.Log("Testing /giga command...")
+		// Отправляем команду /giga
+		testutils.SendMessage(t, updates, specificChatID, 33333333, "/giga")
 
-        // Даем время боту обработать команду
-        time.Sleep(1 * time.Second)
+		// Даем время боту обработать команду
+		time.Sleep(1 * time.Second)
 
-        // Извлекаем длину из логов
-        penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/giga")
-        if err != nil {
-            t.Fatalf("Error extracting pen info: %v", err)
-        }
-        penLength := penInfo.NewSize
-        penUser := penInfo.UserID
-        penChat := penInfo.ChatID
+		// Извлекаем длину из логов
+		penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/giga")
+		if err != nil {
+			t.Fatalf("Error extracting pen info: %v", err)
+		}
+		penLength := penInfo.NewSize
+		penUser := penInfo.UserID
+		penChat := penInfo.ChatID
 
-        // Проверяем результат в базе данных
-        testutils.CheckPenLength(t, db, penUser, &penChat, penLength)
-    })
+		// Проверяем результат в базе данных
+		testutils.CheckPenLength(t, db, penUser, &penChat, penLength)
+	})
 
-    // Тестирование команды /unh
-    t.Run("UnhCommand", func(t *testing.T) {
-        t.Log("Testing /unh command...")
-        // Отправляем команду /unh
-        testutils.SendMessage(t, updates, specificChatID, 33333333, "/unh")
+	// Тестирование команды /unh
+	t.Run("UnhCommand", func(t *testing.T) {
+		t.Log("Testing /unh command...")
+		// Отправляем команду /unh
+		testutils.SendMessage(t, updates, specificChatID, 33333333, "/unh")
 
-        // Даем время боту обработать команду
-        time.Sleep(1 * time.Second)
+		// Даем время боту обработать команду
+		time.Sleep(1 * time.Second)
 
-        // Извлекаем длину из логов
-        penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/unh")
-        if err != nil {
-            t.Fatalf("Error extracting pen info: %v", err)
-        }
-        penLength := penInfo.NewSize
-        penUser := penInfo.UserID
-        penChat := penInfo.ChatID
+		// Извлекаем длину из логов
+		penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/unh")
+		if err != nil {
+			t.Fatalf("Error extracting pen info: %v", err)
+		}
+		penLength := penInfo.NewSize
+		penUser := penInfo.UserID
+		penChat := penInfo.ChatID
 
-        // Проверяем результат в базе данных
-        testutils.CheckPenLength(t, db, penUser, &penChat, penLength)
-    })
+		// Проверяем результат в базе данных
+		testutils.CheckPenLength(t, db, penUser, &penChat, penLength)
+	})
 
-    // Тестирование команды /topLen
-    t.Run("TopLenCommand", func(t *testing.T) {
-        t.Log("Testing /topLen command...")
-        // Отправляем команду /topLen
-        testutils.SendMessage(t, updates, specificChatID, 33333333, "/topLen")
+	// Тестирование команды /topLen
+	t.Run("TopLenCommand", func(t *testing.T) {
+		t.Log("Testing /topLen command...")
+		// Отправляем команду /topLen
+		testutils.SendMessage(t, updates, specificChatID, 33333333, "/topLen")
 
-        // Даем время боту обработать команду
-        time.Sleep(1 * time.Second)
+		// Даем время боту обработать команду
+		time.Sleep(1 * time.Second)
 
-        // Проверяем, что топ-лист был отправлен
-        _, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/topLen")
-        if err != nil {
-            t.Fatalf("Error extracting top list: %v", err)
-        }
-    })
+		// Проверяем, что топ-лист был отправлен
+		_, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/topLen")
+		if err != nil {
+			t.Fatalf("Error extracting top list: %v", err)
+		}
+	})
 
-    // Тестирование команды /topGiga
-    t.Run("TopGigaCommand", func(t *testing.T) {
-        t.Log("Testing /topGiga command...")
-        // Отправляем команду /topGiga
-        testutils.SendMessage(t, updates, specificChatID, 33333333, "/topGiga")
+	// Тестирование команды /topGiga
+	t.Run("TopGigaCommand", func(t *testing.T) {
+		t.Log("Testing /topGiga command...")
+		// Отправляем команду /topGiga
+		testutils.SendMessage(t, updates, specificChatID, 33333333, "/topGiga")
 
-        // Даем время боту обработать команду
-        time.Sleep(1 * time.Second)
+		// Даем время боту обработать команду
+		time.Sleep(1 * time.Second)
 
-        // Проверяем, что топ-лист был отправлен
-        _, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/topGiga")
-        if err != nil {
-            t.Fatalf("Error extracting top list: %v", err)
-        }
-    })
+		// Проверяем, что топ-лист был отправлен
+		_, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/topGiga")
+		if err != nil {
+			t.Fatalf("Error extracting top list: %v", err)
+		}
+	})
 
 	// Тестирование команды /topUnh
 	t.Run("TopUnhCommand", func(t *testing.T) {
@@ -291,66 +291,66 @@ func TestBotE2E(t *testing.T) {
 		}
 	})
 
-    // Тестирование регистрации пользователя при вступлении в чат
-    t.Run("UserJoinEventRegistration", func(t *testing.T) {
-        t.Log("Testing user registration on join event...")
-        update := tgbotapi.Update{
-            UpdateID: 1,
-            Message: &tgbotapi.Message{
-                Chat: &tgbotapi.Chat{
-                    ID: specificChatID,
-                },
-                From: &tgbotapi.User{
-                    ID: 55555555,
-                    UserName: "testuser",
-                },
-                NewChatMembers: []tgbotapi.User{
-                    {
-                        ID: 55555555,
-                        UserName: "testuser",
-                    },
-                },
-            },
-        }
+	// Тестирование регистрации пользователя при вступлении в чат
+	t.Run("UserJoinEventRegistration", func(t *testing.T) {
+		t.Log("Testing user registration on join event...")
+		update := tgbotapi.Update{
+			UpdateID: 1,
+			Message: &tgbotapi.Message{
+				Chat: &tgbotapi.Chat{
+					ID: specificChatID,
+				},
+				From: &tgbotapi.User{
+					ID:       55555555,
+					UserName: "testuser",
+				},
+				NewChatMembers: []tgbotapi.User{
+					{
+						ID:       55555555,
+						UserName: "testuser",
+					},
+				},
+			},
+		}
 
-        updates <- update
-        time.Sleep(1 * time.Second)
+		updates <- update
+		time.Sleep(1 * time.Second)
 
-        testutils.CheckPenLength(t, db, 55555555, &specificChatID, 5)
-    })
+		testutils.CheckPenLength(t, db, 55555555, &specificChatID, 5)
+	})
 
-    // Тестирование отсутствия регистрации при покидании чата
-    t.Run("UserLeaveEventNoRegistration", func(t *testing.T) {
-        t.Log("Testing no registration on leave event...")
-        update := tgbotapi.Update{
-            UpdateID: 2,
-            Message: &tgbotapi.Message{
-                Chat: &tgbotapi.Chat{
-                    ID: specificChatID,
-                },
-                From: &tgbotapi.User{
-                    ID: 66666666,
-                    UserName: "testuser",
-                },
-                LeftChatMember: &tgbotapi.User{
-                    ID: 66666666,
-                    UserName: "testuser", 
-                },
-            },
-        }
+	// Тестирование отсутствия регистрации при покидании чата
+	t.Run("UserLeaveEventNoRegistration", func(t *testing.T) {
+		t.Log("Testing no registration on leave event...")
+		update := tgbotapi.Update{
+			UpdateID: 2,
+			Message: &tgbotapi.Message{
+				Chat: &tgbotapi.Chat{
+					ID: specificChatID,
+				},
+				From: &tgbotapi.User{
+					ID:       66666666,
+					UserName: "testuser",
+				},
+				LeftChatMember: &tgbotapi.User{
+					ID:       66666666,
+					UserName: "testuser",
+				},
+			},
+		}
 
-        updates <- update
-        time.Sleep(1 * time.Second)
+		updates <- update
+		time.Sleep(1 * time.Second)
 
-        var penLength int
-        err := db.QueryRow(
-            "SELECT pen_length FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?",
-            66666666,
-            specificChatID,
-        ).Scan(&penLength)
-        
-        if err == nil {
-            t.Fatalf("User should not be registered on leave event")
-        }
-    })
+		var penLength int
+		err := db.QueryRow(
+			"SELECT pen_length FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?",
+			66666666,
+			specificChatID,
+		).Scan(&penLength)
+
+		if err == nil {
+			t.Fatalf("User should not be registered on leave event")
+		}
+	})
 }

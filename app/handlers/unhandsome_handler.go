@@ -64,7 +64,6 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	// Выбор случайного участника
 	randomMember := app.SelectRandomMember(members)
 
-
 	// Получение текущего размера пениса выбранного участника
 	pen, err := app.GetUserPen(db, randomMember.ID, chatID)
 	if err != nil {

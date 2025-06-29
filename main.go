@@ -114,7 +114,7 @@ func main() {
 	app.CheckPenLength(db)
 
 	// Запуск еженедельного архивирования неактивных пользователей
-    app.StartArchiveRoutine(db)
+	app.StartArchiveRoutine(db)
 
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
@@ -124,8 +124,8 @@ func main() {
 		"/giga":                               handlers.ChooseGiga,
 		"/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
 		"/unh":                                handlers.ChooseUnhandsome,
-		"/toppens":							   handlers.TopLength,
-		"/toppens@super_cum_lovers_bot":	   handlers.TopLength,
+		"/toppens":                            handlers.TopLength,
+		"/toppens@super_cum_lovers_bot":       handlers.TopLength,
 		"/toplength@super_cum_lovers_bot":     handlers.TopLength,
 		"/toplen":                             handlers.TopLength,
 		"/topgiga@super_cum_lovers_bot":       handlers.TopGiga,
