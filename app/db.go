@@ -6,9 +6,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
-	"sort"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -65,7 +65,9 @@ func InitDB() (*sql.DB, error) {
 		);`
 		_, err = db.Exec(createTableQuery)
 		if err != nil {
-			db.Close() // Закрываем базу данных при ошибке
+			if closeErr := db.Close(); closeErr != nil {
+				log.Printf("Error closing database: %v", closeErr)
+			}
 			log.Printf("Error creating table: %v", err)
 			return nil, err
 		}
@@ -74,19 +76,33 @@ func InitDB() (*sql.DB, error) {
 		createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
 		_, err = db.Exec(createIndexQuery)
 		if err != nil {
-			db.Close() // Закрываем базу данных при ошибке
+			if closeErr := db.Close(); closeErr != nil {
+				log.Printf("Error closing database: %v", closeErr)
+			}
 			log.Printf("Error creating index: %v", err)
 			return nil, err
 		}
 
-        // Создание индекса для tg_pen_id
-        createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
-        _, err = db.Exec(createIndexQuery)
-        if err != nil {
-            db.Close() // Закрываем базу данных при ошибке
-            log.Printf("Error creating index: %v", err)
-            return nil, err
-        }
+		// Создание индекса для tg_pen_id
+		createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
+		_, err = db.Exec(createIndexQuery)
+		if err != nil {
+			if closeErr := db.Close(); closeErr != nil {
+				log.Printf("Error closing database: %v", closeErr)
+			}
+			log.Printf("Error creating index: %v", err)
+			return nil, err
+		}
+
+		// Запускаем миграции
+		err = RunMigrations(db)
+		if err != nil {
+			if closeErr := db.Close(); closeErr != nil {
+				log.Printf("Error closing database: %v", closeErr)
+			}
+			log.Printf("Error running migrations: %v", err)
+			return nil, err
+		}
 
 		log.Println("Database and table and index created successfully")
 		return db, nil
@@ -103,6 +119,9 @@ func InitDB() (*sql.DB, error) {
 	createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
 	_, err = db.Exec(createIndexQuery)
 	if err != nil {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("Error closing database: %v", closeErr)
+		}
 		log.Printf("Error creating index: %v", err)
 		return nil, err
 	}
@@ -111,12 +130,24 @@ func InitDB() (*sql.DB, error) {
 	createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
 	_, err = db.Exec(createIndexQuery)
 	if err != nil {
-		db.Close() // Закрываем базу данных при ошибке
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("Error closing database: %v", closeErr)
+		}
 		log.Printf("Error creating index: %v", err)
 		return nil, err
 	}
 
 	log.Println("Index created successfully in existing database")
+
+	// Запускаем миграции для существующей базы данных
+	err = RunMigrations(db)
+	if err != nil {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("Error closing database: %v", closeErr)
+		}
+		log.Printf("Error running migrations: %v", err)
+		return nil, err
+	}
 
 	// Установка режима журнала WAL
 	_, err = db.Exec("PRAGMA journal_mode = WAL;")
@@ -140,13 +171,17 @@ func GetUserIDByUsername(db *sql.DB, username string) (int, error) {
 	return userID, nil
 }
 
-// GetPenNames получает все значения pen_name из таблицы pens
+// GetPenNames получает все значения pen_name из таблицы pens для активных пользователей
 func GetPenNames(db *sql.DB, chatID int64) ([]Member, error) {
-	rows, err := db.Query("SELECT tg_pen_id, pen_name FROM pens WHERE tg_chat_id = ?", chatID)
+	rows, err := db.Query("SELECT tg_pen_id, pen_name FROM pens WHERE tg_chat_id = ? AND is_active = TRUE", chatID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing rows: %v", closeErr)
+		}
+	}()
 
 	var members []Member
 	for rows.Next() {
@@ -157,7 +192,10 @@ func GetPenNames(db *sql.DB, chatID int64) ([]Member, error) {
 		}
 		members = append(members, member)
 	}
-	log.Printf("Members list: %v", members)
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	log.Printf("Active members list: %v", members)
 	return members, nil
 }
 
@@ -175,13 +213,13 @@ func GetUserPen(db *sql.DB, userID int64, chatID int64) (Pen, error) {
 	return Pen{currentSize, lastUpdate.Time}, err
 }
 
-// UpdateUserPen обновляет значения pen_length и pen_last_update_at в базе данных
+// UpdateUserPen обновляет значения pen_length, pen_last_update_at и отмечает пользователя как активного
 func UpdateUserPen(db *sql.DB, userID int64, chatID int64, newSize int) {
-	_, err := db.Exec("UPDATE pens SET pen_length = ?, pen_last_update_at = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
+	_, err := db.Exec("UPDATE pens SET pen_length = ?, pen_last_update_at = ?, is_active = TRUE WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
 	if err != nil {
-		log.Printf("Error updating pen size and last update time: %v", err)
+		log.Printf("Error updating pen size, last update time and active status: %v", err)
 	} else {
-		log.Printf("Successfully updated pen size and last update time for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+		log.Printf("Successfully updated pen size, last update time and active status for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
 	}
 }
 
@@ -240,7 +278,9 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 	_, err = tx.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
 	if err != nil {
 		log.Printf("Error updating giga count: %v", err)
-        tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Error on transaction rollback: %v", rbErr)
+		}
 	} else {
 		log.Printf("Successfully updated giga count for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
 	}
@@ -252,10 +292,12 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 	}
 
 	// Подтверждаем транзакцию
-    err = tx.Commit();
+	err = tx.Commit()
 	if err != nil {
 		log.Printf("Error committing transaction: %v", err)
-        tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Error on transaction rollback: %v", rbErr)
+		}
 	}
 }
 
@@ -275,7 +317,7 @@ func UpdateGigaLastUpdate(db SQLExecutor, chatID int64) error {
 
 // UpdateUnhandsome обновляет значения unhandsome_count и unhandsome_last_update_at в базе данных
 func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
-    tx, err := db.Begin()
+	tx, err := db.Begin()
 	if err != nil {
 		log.Printf("Error starting transaction: %v", err)
 		return
@@ -283,36 +325,40 @@ func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
 	_, err = tx.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
 	if err != nil {
 		log.Printf("Error updating unhandsome count and last_update_at: %v", err)
-        tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Error on transaction rollback: %v", rbErr)
+		}
 	} else {
 		log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
 	}
 
-    // Обновляем last_update
+	// Обновляем last_update
 	err = UpdateUnhandsomeLastUpdate(tx, chatID)
 	if err != nil {
 		return
 	}
 
-    // Подтверждаем транзакцию
-    err = tx.Commit();
-    if err != nil {
-        log.Printf("Error committing transaction: %v", err)
-        tx.Rollback()
-    }
+	// Подтверждаем транзакцию
+	err = tx.Commit()
+	if err != nil {
+		log.Printf("Error committing transaction: %v", err)
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Error on transaction rollback: %v", rbErr)
+		}
+	}
 }
 
 func UpdateUnhandsomeLastUpdate(db SQLExecutor, chatID int64) error {
-    var err error
+	var err error
 	dbStatement := "UPDATE pens SET unhandsome_last_update_at = ? WHERE tg_chat_id = ?"
 	_, err = db.Exec(dbStatement, time.Now(), chatID)
 
 	if err != nil {
 		log.Printf("Error updating unhandsome last_update_at: %v", err)
-        return err
+		return err
 	} else {
 		log.Printf("Successfully updated unhandsome last_update_at for chatID: %d,", chatID)
-        return nil
+		return nil
 	}
 }
 
@@ -361,10 +407,10 @@ func backupDatabase() error {
 		}
 	}
 
-    // Удаление старых резервных копий, если общий размер превышает 10 МБ
-    if err := removeOldBackups(backupDir); err != nil {
-        return fmt.Errorf("failed to remove old backups: %v", err)
-    }
+	// Удаление старых резервных копий, если общий размер превышает 10 МБ
+	if err := removeOldBackups(backupDir); err != nil {
+		return fmt.Errorf("failed to remove old backups: %v", err)
+	}
 
 	// Проверка существования файла базы данных
 	if _, err := os.Stat(source); os.IsNotExist(err) {
@@ -377,68 +423,72 @@ func backupDatabase() error {
 	if err != nil {
 		return fmt.Errorf("failed to open source database: %v", err)
 	}
-	defer srcDB.Close()
+	defer func() {
+		if closeErr := srcDB.Close(); closeErr != nil {
+			log.Printf("Error closing source database: %v", closeErr)
+		}
+	}()
 
-    // Выполнение резервного копирования с использованием команды VACUUM INTO
-    _, err = srcDB.Exec(fmt.Sprintf("VACUUM INTO '%s';", backupFile))
-    if err != nil {
-        return fmt.Errorf("failed to backup database: %v", err)
-    }
+	// Выполнение резервного копирования с использованием команды VACUUM INTO
+	_, err = srcDB.Exec(fmt.Sprintf("VACUUM INTO '%s';", backupFile))
+	if err != nil {
+		return fmt.Errorf("failed to backup database: %v", err)
+	}
 
-    // Вывод сообщения об успешном создании резервной копии
-    log.Printf("Backup created successfully at %s", backupFile)
-    return nil // Возвращаем nil, если все операции прошли успешно
+	// Вывод сообщения об успешном создании резервной копии
+	log.Printf("Backup created successfully at %s", backupFile)
+	return nil // Возвращаем nil, если все операции прошли успешно
 }
 
 // removeOldBackups удаляет старые резервные копии, если общий размер всех резервных копий превышает 10 МБ
 func removeOldBackups(backupDir string) error {
-    const maxSize = 10 * 1024 * 1024 // 10 МБ
+	const maxSize = 10 * 1024 * 1024 // 10 МБ
 
-    // Получение списка файлов в директории резервных копий
-    files, err := os.ReadDir(backupDir)
-    if err != nil {
-        return fmt.Errorf("failed to read backup directory: %v", err)
-    }
+	// Получение списка файлов в директории резервных копий
+	files, err := os.ReadDir(backupDir)
+	if err != nil {
+		return fmt.Errorf("failed to read backup directory: %v", err)
+	}
 
-    // Вычисление общего размера всех файлов
-    var totalSize int64
-    for _, file := range files {
-        if info, err := file.Info(); err == nil && !info.IsDir() {
-            totalSize += info.Size()
-        }
-    }
+	// Вычисление общего размера всех файлов
+	var totalSize int64
+	for _, file := range files {
+		if info, err := file.Info(); err == nil && !info.IsDir() {
+			totalSize += info.Size()
+		}
+	}
 
-    // Если общий размер меньше или равен maxSize, ничего не делаем
-    if totalSize <= maxSize {
-        return nil
-    }
+	// Если общий размер меньше или равен maxSize, ничего не делаем
+	if totalSize <= maxSize {
+		return nil
+	}
 
-    // Сортировка файлов по времени модификации (от старых к новым)
-    sort.Slice(files, func(i, j int) bool {
-        infoI, _ := files[i].Info()
-        infoJ, _ := files[j].Info()
-        return infoI.ModTime().Before(infoJ.ModTime())
-    })
+	// Сортировка файлов по времени модификации (от старых к новым)
+	sort.Slice(files, func(i, j int) bool {
+		infoI, _ := files[i].Info()
+		infoJ, _ := files[j].Info()
+		return infoI.ModTime().Before(infoJ.ModTime())
+	})
 
-    // Удаление старых файлов до тех пор, пока общий размер не станет меньше maxSize
-    for _, file := range files {
-        info, err := file.Info()
-        if err != nil || info.IsDir() {
-            continue
-        }
-        filePath := filepath.Join(backupDir, file.Name())
-        if err := os.Remove(filePath); err != nil {
-            return fmt.Errorf("failed to remove file: %v", err)
-        } else {
+	// Удаление старых файлов до тех пор, пока общий размер не станет меньше maxSize
+	for _, file := range files {
+		info, err := file.Info()
+		if err != nil || info.IsDir() {
+			continue
+		}
+		filePath := filepath.Join(backupDir, file.Name())
+		if err := os.Remove(filePath); err != nil {
+			return fmt.Errorf("failed to remove file: %v", err)
+		} else {
 			log.Printf("Removed old backup file: %s", filePath)
 		}
-        totalSize -= info.Size()
-        if totalSize <= maxSize {
-            break
-        }
-    }
+		totalSize -= info.Size()
+		if totalSize <= maxSize {
+			break
+		}
+	}
 
-    return nil
+	return nil
 }
 
 // CheckPenLength проверяет значения pen_length и пишет в лог, если больше половины значений равны 5
@@ -486,18 +536,18 @@ func CheckIntegrity(db *sql.DB) {
 
 // SQLExecutor is an interface that wraps the Exec, Query, and QueryRow methods of sql.DB
 type SQLExecutor interface {
-    Exec(query string, args ...interface{}) (sql.Result, error)
-    Query(query string, args ...interface{}) (*sql.Rows, error)
-    QueryRow(query string, args ...interface{}) *sql.Row
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
 }
 
 // Проверка наличия пользователя в базе данных
 func UserExists(db *sql.DB, userID int64, chatID int64) (bool, error) {
-    var exists bool
-    query := `SELECT EXISTS(SELECT 1 FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?)`
-    err := db.QueryRow(query, userID, chatID).Scan(&exists)
-    if err != nil {
-        return false, err
-    }
-    return exists, nil
+	var exists bool
+	query := `SELECT EXISTS(SELECT 1 FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?)`
+	err := db.QueryRow(query, userID, chatID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }

@@ -1,15 +1,15 @@
 package testutils
 
 import (
+	"bytes"
+	"database/sql"
 	"os"
-    "testing"
-    "regexp"
-    "strconv"
-    "time"
-    "database/sql"
-    "bytes"
+	"regexp"
+	"strconv"
+	"testing"
+	"time"
 
-    tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 // SetupTestEnvironment создает временную директорию для теста и меняет текущий рабочий каталог на эту директорию.
@@ -68,125 +68,125 @@ func SendMessage(t *testing.T, updates chan tgbotapi.Update, chatID int64, userI
 
 // CheckPenLength проверяет длину pen в базе данных
 func CheckPenLength(t *testing.T, db *sql.DB, userID int64, tgChatID *int64, expectedLength int64) {
-    var penLength int
-    defaultChatID := int64(-987654321)
-    if tgChatID == nil {
-        tgChatID = &defaultChatID
-    }
-    err := db.QueryRow("SELECT pen_length FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?", userID, *tgChatID).Scan(&penLength)
-    if err != nil {
-        t.Fatalf("Failed to query user %d: %v", userID, err)
-    }
-    if int64(penLength) != expectedLength {
-        t.Errorf("expected pen_length for user %d to be %d, but got %d", userID, expectedLength, penLength)
-    } else {
-        t.Logf("pen_length for user %d is as expected: %d", userID, penLength)
-    }
+	var penLength int
+	defaultChatID := int64(-987654321)
+	if tgChatID == nil {
+		tgChatID = &defaultChatID
+	}
+	err := db.QueryRow("SELECT pen_length FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?", userID, *tgChatID).Scan(&penLength)
+	if err != nil {
+		t.Fatalf("Failed to query user %d: %v", userID, err)
+	}
+	if int64(penLength) != expectedLength {
+		t.Errorf("expected pen_length for user %d to be %d, but got %d", userID, expectedLength, penLength)
+	} else {
+		t.Logf("pen_length for user %d is as expected: %d", userID, penLength)
+	}
 }
 
 type PenInfo struct {
-    UserID  int64
-    ChatID  int64
-    NewSize int64
+	UserID  int64
+	ChatID  int64
+	NewSize int64
 }
 
 // ExtractPenInfoFromLogs извлекает длину pen из логов
 func ExtractPenInfoFromLogs(t *testing.T, logBuffer *bytes.Buffer, mode string) (PenInfo, error) {
-    logs := logBuffer.String()
-    t.Log("Logs content:", logs)
+	logs := logBuffer.String()
+	t.Log("Logs content:", logs)
 
-    var re *regexp.Regexp
-    var penInfo PenInfo
+	var re *regexp.Regexp
+	var penInfo PenInfo
 
-    switch mode {
-    case "/pen":
-        re = regexp.MustCompile(`Updated pen size: (\d+)`)
-        matches := re.FindAllStringSubmatch(logs, -1)
-        if len(matches) == 0 {
-            t.Fatalf("Failed to extract pen_length from logs: %v", logs)
-        }
-        lastMatch := matches[len(matches)-1]
-        penLength, err := strconv.ParseInt(lastMatch[1], 10, 64)
-        if err != nil {
-            t.Fatalf("Failed to convert pen_length to int64: %v", err)
-        }
-        penInfo.NewSize = penLength
-    case "/giga", "/unh":
-        re = regexp.MustCompile(`userID: (\d+), chatID: (-\d+), newSize: (-?\d+)`)
-        matches := re.FindAllStringSubmatch(logs, -1)
-        if len(matches) == 0 {
-            t.Fatalf("Failed to extract parameters from logs: %v", logs)
-        }
-        lastMatch := matches[len(matches)-1]
-        userID, err := strconv.ParseInt(lastMatch[1], 10, 64)
-        if err != nil {
-            t.Fatalf("Failed to convert userID to int64: %v", err)
-        }
-        chatID, err := strconv.ParseInt(lastMatch[2], 10, 64)
-        if err != nil {
-            t.Fatalf("Failed to convert chatID to int64: %v", err)
-        }
-        newSize, err := strconv.ParseInt(lastMatch[3], 10, 64)
-        if err != nil {
-            t.Fatalf("Failed to convert newSize to int64: %v", err)
-        } else {
-            t.Logf("Extracted parameters: userID=%d, chatID=%d, newSize=%d", userID, chatID, newSize)
-        }
-        penInfo = PenInfo{
-            UserID:  userID,
-            ChatID:  chatID,
-            NewSize: newSize,
-        }
-    case "/topLen", "/topGiga", "/topUnh":
-        var messagePattern string
-        switch mode {
-        case "/topLen":
-            messagePattern = `Message sent to chat ID [-\d]+: Топ \d+ по длине пениса:`
-        case "/topGiga":
-            messagePattern = `Message sent to chat ID [-\d]+: Топ \d+ гигачадов:`
-        case "/topUnh":
-            messagePattern = `Message sent to chat ID [-\d]+: Топ \d+ пидоров:`
-        }
-        
-        re = regexp.MustCompile(messagePattern)
-        matches := re.FindStringSubmatch(logs)
-        if len(matches) == 0 {
-            t.Fatalf("Failed to extract top list from logs: %v", logs)
-        }
-        t.Logf("Found top list message: %v", matches[0])
-    default:
-        t.Fatalf("Invalid mode: %v", mode)
-    }
+	switch mode {
+	case "/pen":
+		re = regexp.MustCompile(`Updated pen size: (\d+)`)
+		matches := re.FindAllStringSubmatch(logs, -1)
+		if len(matches) == 0 {
+			t.Fatalf("Failed to extract pen_length from logs: %v", logs)
+		}
+		lastMatch := matches[len(matches)-1]
+		penLength, err := strconv.ParseInt(lastMatch[1], 10, 64)
+		if err != nil {
+			t.Fatalf("Failed to convert pen_length to int64: %v", err)
+		}
+		penInfo.NewSize = penLength
+	case "/giga", "/unh":
+		re = regexp.MustCompile(`userID: (\d+), chatID: (-\d+), newSize: (-?\d+)`)
+		matches := re.FindAllStringSubmatch(logs, -1)
+		if len(matches) == 0 {
+			t.Fatalf("Failed to extract parameters from logs: %v", logs)
+		}
+		lastMatch := matches[len(matches)-1]
+		userID, err := strconv.ParseInt(lastMatch[1], 10, 64)
+		if err != nil {
+			t.Fatalf("Failed to convert userID to int64: %v", err)
+		}
+		chatID, err := strconv.ParseInt(lastMatch[2], 10, 64)
+		if err != nil {
+			t.Fatalf("Failed to convert chatID to int64: %v", err)
+		}
+		newSize, err := strconv.ParseInt(lastMatch[3], 10, 64)
+		if err != nil {
+			t.Fatalf("Failed to convert newSize to int64: %v", err)
+		} else {
+			t.Logf("Extracted parameters: userID=%d, chatID=%d, newSize=%d", userID, chatID, newSize)
+		}
+		penInfo = PenInfo{
+			UserID:  userID,
+			ChatID:  chatID,
+			NewSize: newSize,
+		}
+	case "/topLen", "/topGiga", "/topUnh":
+		var messagePattern string
+		switch mode {
+		case "/topLen":
+			messagePattern = `Message sent to chat ID [-\d]+: Топ \d+ по длине пениса:`
+		case "/topGiga":
+			messagePattern = `Message sent to chat ID [-\d]+: Топ \d+ гигачадов:`
+		case "/topUnh":
+			messagePattern = `Message sent to chat ID [-\d]+: Топ \d+ пидоров:`
+		}
 
-    return penInfo, nil
+		re = regexp.MustCompile(messagePattern)
+		matches := re.FindStringSubmatch(logs)
+		if len(matches) == 0 {
+			t.Fatalf("Failed to extract top list from logs: %v", logs)
+		}
+		t.Logf("Found top list message: %v", matches[0])
+	default:
+		t.Fatalf("Invalid mode: %v", mode)
+	}
+
+	return penInfo, nil
 }
 
 // ChangeData изменяет данные в базе данных
 func ChangeData(t *testing.T, db *sql.DB, userID int64, chatID int64, updates map[string]interface{}) {
-    if len(updates) == 0 {
-        t.Fatalf("No updates provided")
-    }
+	if len(updates) == 0 {
+		t.Fatalf("No updates provided")
+	}
 
-    // Формируем SQL-запрос динамически
-    query := "UPDATE pens SET "
-    args := []interface{}{}
-    for column, value := range updates {
-        query += column + " = ?, "
-        args = append(args, value)
-    }
-    query = query[:len(query)-2] // Удаляем последнюю запятую и пробел
-    query += " WHERE tg_pen_id = ? AND tg_chat_id = ?"
-    args = append(args, userID, chatID)
+	// Формируем SQL-запрос динамически
+	query := "UPDATE pens SET "
+	args := []interface{}{}
+	for column, value := range updates {
+		query += column + " = ?, "
+		args = append(args, value)
+	}
+	query = query[:len(query)-2] // Удаляем последнюю запятую и пробел
+	query += " WHERE tg_pen_id = ? AND tg_chat_id = ?"
+	args = append(args, userID, chatID)
 
-    // Логируем сформированный запрос и аргументы
-    t.Logf("Executing query: %s with args: %v", query, args)
+	// Логируем сформированный запрос и аргументы
+	t.Logf("Executing query: %s with args: %v", query, args)
 
-    // Выполняем запрос
-    _, err := db.Exec(query, args...)
-    if err != nil {
-        t.Fatalf("Failed to update data: %v", err)
-    }
+	// Выполняем запрос
+	_, err := db.Exec(query, args...)
+	if err != nil {
+		t.Fatalf("Failed to update data: %v", err)
+	}
 
-    // Логируем успешное выполнение запроса
-    t.Log("Data updated successfully")
+	// Логируем успешное выполнение запроса
+	t.Log("Data updated successfully")
 }

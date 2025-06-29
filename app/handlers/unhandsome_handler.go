@@ -41,7 +41,9 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 
 	// Проводим ролл на пропуск выбора пидора дня
 	if app.SpinSkipAction() {
-		app.UpdateUnhandsomeLastUpdate(db, chatID)
+		if err := app.UpdateUnhandsomeLastUpdate(db, chatID); err != nil {
+			log.Printf("Error updating unhandsome last update: %v", err)
+		}
 		message := messagegenerators.GetSkipUnhandsomeMessage()
 		app.SendMessage(chatID, message, bot, update.Message.MessageID)
 		return
@@ -61,7 +63,6 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 
 	// Выбор случайного участника
 	randomMember := app.SelectRandomMember(members)
-
 
 	// Получение текущего размера пениса выбранного участника
 	pen, err := app.GetUserPen(db, randomMember.ID, chatID)

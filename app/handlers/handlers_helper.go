@@ -38,7 +38,11 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 		log.Printf("Error preparing insert statement: %v", err)
 		return
 	}
-	defer stmt.Close()
+	defer func() {
+		if closeErr := stmt.Close(); closeErr != nil {
+			log.Printf("Error closing statement: %v", closeErr)
+		}
+	}()
 
 	// Выполнение подготовленного запроса с параметрами и добавление 5 см к размеру пениса
 	_, err = stmt.Exec(userName, userID, chatID, 5)
@@ -57,10 +61,10 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 
 // isUserJoinEvent проверяет, является ли сообщение событием входа пользователя в чат
 func isUserJoinEvent(update tgbotapi.Update) bool {
-    return update.Message.NewChatMembers != nil
+	return update.Message.NewChatMembers != nil
 }
 
 // isUserLeaveEvent проверяет, является ли сообщение событием выхода пользователя из чата
 func isUserLeaveEvent(update tgbotapi.Update) bool {
-    return update.Message.LeftChatMember != nil
+	return update.Message.LeftChatMember != nil
 }
