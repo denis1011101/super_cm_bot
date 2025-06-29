@@ -116,6 +116,9 @@ func main() {
 	// Запуск еженедельного архивирования неактивных пользователей
 	app.StartArchiveRoutine(db)
 
+	// Запуск ежедневных команд в случайное время
+	app.StartDailyCommandsRoutine(db, bot, specificChatID, handlers.ChooseGiga, handlers.ChooseUnhandsome)
+
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
 		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,

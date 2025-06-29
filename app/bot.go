@@ -3,6 +3,7 @@ package app
 import (
 	"database/sql"
 	"log"
+	"math/rand"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -95,4 +96,108 @@ func StartArchiveRoutine(db *sql.DB) {
             time.Sleep(7 * 24 * time.Hour)
         }
     }()
+}
+
+// StartDailyCommandsRoutine запускает горутину для ежедневного вызова команд в случайное время
+func StartDailyCommandsRoutine(
+    db *sql.DB,
+    bot *tgbotapi.BotAPI,
+    chatID int64,
+    gigaHandler func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB),
+    unhHandler func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB),
+) {
+    // Запускаем отдельные горутины для каждой команды
+    go func() {
+        log.Printf("Daily /giga command routine started")
+        for {
+            // Генерируем случайное время в течение дня (0-23 часа, 0-59 минут)
+            randomHour := rand.Intn(24)
+            randomMinute := rand.Intn(60)
+            
+            // Текущее время
+            now := time.Now()
+            
+            // Создаем время для сегодняшнего запуска
+            nextRun := time.Date(now.Year(), now.Month(), now.Day(), randomHour, randomMinute, 0, 0, now.Location())
+            
+            // Если время уже прошло, переносим на завтра
+            if nextRun.Before(now) {
+                nextRun = nextRun.AddDate(0, 0, 1)
+            }
+            
+            // Вычисляем время ожидания
+            waitTime := time.Until(nextRun)
+            
+            log.Printf("Next daily /giga command will run at: %s (in %v)",
+                nextRun.Format("2006-01-02 15:04:05"), waitTime)
+
+            // Ждем до назначенного времени
+            time.Sleep(waitTime)
+            
+            log.Printf("Executing daily /giga command...")
+            
+            // Создаем фейковое обновление для /giga
+            gigaUpdate := createFakeUpdate(chatID, "/giga")
+            gigaHandler(gigaUpdate, bot, db)
+            
+            log.Printf("Daily /giga command executed successfully")
+        }
+    }()
+
+    go func() {
+        log.Printf("Daily /unh command routine started")
+        for {
+            // Генерируем случайное время в течение дня (0-23 часа, 0-59 минут)
+            randomHour := rand.Intn(24)
+            randomMinute := rand.Intn(60)
+            
+            // Текущее время
+            now := time.Now()
+            
+            // Создаем время для сегодняшнего запуска
+            nextRun := time.Date(now.Year(), now.Month(), now.Day(), randomHour, randomMinute, 0, 0, now.Location())
+            
+            // Если время уже прошло, переносим на завтра
+            if nextRun.Before(now) {
+                nextRun = nextRun.AddDate(0, 0, 1)
+            }
+            
+            // Вычисляем время ожидания
+            waitTime := time.Until(nextRun)
+            
+            log.Printf("Next daily /unh command will run at: %s (in %v)", 
+                nextRun.Format("2006-01-02 15:04:05"), waitTime)
+            
+            // Ждем до назначенного времени
+            time.Sleep(waitTime)
+            
+            log.Printf("Executing daily /unh command...")
+            
+            // Создаем фейковое обновление для /unh
+            unhUpdate := createFakeUpdate(chatID, "/unh")
+            unhHandler(unhUpdate, bot, db)
+            
+            log.Printf("Daily /unh command executed successfully")
+        }
+    }()
+}
+
+// createFakeUpdate создает фейковое обновление для имитации команды
+func createFakeUpdate(chatID int64, command string) tgbotapi.Update {
+    return tgbotapi.Update{
+        Message: &tgbotapi.Message{
+            MessageID: 0,
+            From: &tgbotapi.User{
+                ID:        0,
+                FirstName: "Daily",
+                LastName:  "Bot",
+                UserName:  "daily_bot",
+            },
+            Chat: &tgbotapi.Chat{
+                ID: chatID,
+            },
+            Date: int(time.Now().Unix()),
+            Text: command,
+        },
+    }
 }
