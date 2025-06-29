@@ -14,7 +14,7 @@ func checkIsSpinNotLegal(lastUpdate time.Time) bool {
 	if !lastUpdate.IsZero() {
 		duration := time.Since(lastUpdate)
 
-		if duration.Seconds() < 4 {
+		if duration.Hours() < 4 {
 			log.Println("Spin is not legal: less than 4 hours since last update")
 			return true
 		}
