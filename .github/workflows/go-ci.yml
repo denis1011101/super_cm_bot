@@ -20,4 +20,9 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test -count=1 ./tests
+        run: go test -timeout=60s -count=1 ./tests
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
