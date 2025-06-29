@@ -34,7 +34,11 @@ func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		log.Printf("Error preparing query statement: %v", err)
 		return
 	}
-	defer stmt.Close()
+	defer func() {
+		if closeErr := stmt.Close(); closeErr != nil {
+			log.Printf("Error closing statement: %v", closeErr)
+		}
+	}()
 
 	// Выполнение подготовленного запроса с параметрами
 	rows, err := stmt.Query(chatID)
@@ -42,7 +46,11 @@ func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		log.Printf("Error querying top length: %v", err)
 		return
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing rows: %v", closeErr)
+		}
+	}()
 
 	var records []TopLengthStruct
 	GiantPenComment := []string{"Настоящий гигачад с елдой ", "Полупокер но с большим хреном ", "Лучше быть третьим чем выступать в цирке ", "Rуколд с "}

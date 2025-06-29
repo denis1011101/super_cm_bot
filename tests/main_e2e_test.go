@@ -19,12 +19,14 @@ import (
 
 func TestMain(m *testing.M) {
     // Установка фиктивного токена
-    os.Setenv("BOT_TOKEN", "fake-token")
+    if err := os.Setenv("BOT_TOKEN", "fake-token"); err != nil {
+        log.Fatalf("Failed to set BOT_TOKEN: %v", err)
+    }
     log.Println("Используется фиктивный токен.")
 
-	// Запуск тестов
-	code := m.Run()
-	os.Exit(code)
+    // Запуск тестов
+    code := m.Run()
+    os.Exit(code)
 }
 
 func TestBotE2E(t *testing.T) {
@@ -37,7 +39,11 @@ func TestBotE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
-	defer db.Close()
+    defer func() {
+        if err := db.Close(); err != nil {
+            t.Fatalf("Error closing database: %v", err)
+        }
+    }()
 
 	// Проверка, что таблица создана
 	var tableName string
@@ -60,10 +66,12 @@ func TestBotE2E(t *testing.T) {
 	}
 
 	// Создаем мок-сервер для API Telegram
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`))
-	}))
+    mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        if _, err := w.Write([]byte(`{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)); err != nil {
+            t.Fatalf("mockServer failed to write response: %v", err)
+        }
+    }))
 	defer mockServer.Close()
 
 	// Создаем мок-объект бота с фиктивным токеном и перенаправляем запросы на мок-сервер

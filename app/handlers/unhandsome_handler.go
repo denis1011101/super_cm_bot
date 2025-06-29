@@ -41,7 +41,9 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 
 	// Проводим ролл на пропуск выбора пидора дня
 	if app.SpinSkipAction() {
-		app.UpdateUnhandsomeLastUpdate(db, chatID)
+		if err := app.UpdateUnhandsomeLastUpdate(db, chatID); err != nil {
+			log.Printf("Error updating unhandsome last update: %v", err)
+		}
 		message := messagegenerators.GetSkipUnhandsomeMessage()
 		app.SendMessage(chatID, message, bot, update.Message.MessageID)
 		return

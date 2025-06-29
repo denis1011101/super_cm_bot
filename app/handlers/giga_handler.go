@@ -41,7 +41,9 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 
 	// Проводим ролл на пропуск выбора гигачада дня
 	if app.SpinSkipAction() {
-		app.UpdateGigaLastUpdate(db, chatID)
+		if err := app.UpdateGigaLastUpdate(db, chatID); err != nil {
+			log.Printf("Error updating giga last update: %v", err)
+		}
 		message := messagegenerators.GetSkipGigaMessage()
 		app.SendMessage(chatID, message, bot, update.Message.MessageID)
 		return

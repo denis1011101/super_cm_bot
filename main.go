@@ -37,15 +37,23 @@ func main() {
 	})
 
 	// Настройка логирования SQLite
-	os.Setenv("SQLITE_TRACE", "1")
-	os.Setenv("SQLITE_TRACE_FILE", logFilePath)
+	if err := os.Setenv("SQLITE_TRACE", "1"); err != nil {
+		log.Printf("Failed to set SQLITE_TRACE env: %v", err)
+	}
+	if err := os.Setenv("SQLITE_TRACE_FILE", logFilePath); err != nil {
+		log.Printf("Failed to set SQLITE_TRACE_FILE env: %v", err)
+	}
 
 	// Открываем файл для записи логов
 	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
 		log.Fatalf("Failed to open log file: %v", err)
 	}
-	defer logFile.Close()
+	defer func() {
+		if err := logFile.Close(); err != nil {
+			log.Printf("Error closing log file: %v", err)
+		}
+	}()
 
 	// Настраиваем логгер для записи в файл
 	log.SetOutput(logFile)

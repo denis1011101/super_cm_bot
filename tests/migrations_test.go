@@ -20,7 +20,11 @@ func TestRunMigrations(t *testing.T) {
     if err != nil {
         t.Fatalf("Failed to initialize database: %v", err)
     }
-    defer db.Close()
+    defer func() {
+        if err := db.Close(); err != nil {
+            t.Fatalf("Error closing database: %v", err)
+        }
+    }()
 
     // Проверяем, что таблица migrations создана
     var tableName string
@@ -47,7 +51,11 @@ func TestRunMigrations(t *testing.T) {
     if err != nil {
         t.Fatalf("Failed to get table info: %v", err)
     }
-    defer rows.Close()
+    defer func() {
+        if err := rows.Close(); err != nil {
+            t.Fatalf("Error closing rows: %v", err)
+        }
+    }()
 
     var hasIsActiveColumn bool
     for rows.Next() {
@@ -84,7 +92,11 @@ func TestMigrationsIdempotency(t *testing.T) {
     if err != nil {
         t.Fatalf("Failed to initialize database: %v", err)
     }
-    defer db.Close()
+    defer func() {
+        if err := db.Close(); err != nil {
+            t.Fatalf("Error closing database: %v", err)
+        }
+    }()
 
     // Запускаем миграции первый раз
     err = app.RunMigrations(db)
@@ -127,7 +139,11 @@ func TestMigrationWithError(t *testing.T) {
     if err != nil {
         t.Fatalf("Failed to open database: %v", err)
     }
-    defer db.Close()
+    defer func() {
+        if err := db.Close(); err != nil {
+            t.Fatalf("Error closing database: %v", err)
+        }
+    }()
 
     // Пытаемся запустить миграции на несуществующей таблице
     err = app.RunMigrations(db)
@@ -159,7 +175,11 @@ func TestMigrationTimestamp(t *testing.T) {
     if err != nil {
         t.Fatalf("Failed to initialize database: %v", err)
     }
-    defer db.Close()
+    defer func() {
+        if err := db.Close(); err != nil {
+            t.Fatalf("Error closing database: %v", err)
+        }
+    }()
 
     // Получаем timestamp миграции
     var appliedAt string
@@ -190,14 +210,22 @@ func TestMigrationTableStructure(t *testing.T) {
     if err != nil {
         t.Fatalf("Failed to initialize database: %v", err)
     }
-    defer db.Close()
+    defer func() {
+        if err := db.Close(); err != nil {
+            t.Fatalf("Error closing database: %v", err)
+        }
+    }()
 
     // Проверяем структуру таблицы migrations
     rows, err := db.Query("PRAGMA table_info(migrations)")
     if err != nil {
         t.Fatalf("Failed to get migrations table info: %v", err)
     }
-    defer rows.Close()
+    defer func() {
+        if err := rows.Close(); err != nil {
+            t.Fatalf("Error closing rows: %v", err)
+        }
+    }()
 
     expectedColumns := map[string]string{
         "id":         "INTEGER",
@@ -238,7 +266,11 @@ func TestIsActiveColumnDefault(t *testing.T) {
     if err != nil {
         t.Fatalf("Failed to initialize database: %v", err)
     }
-    defer db.Close()
+    defer func() {
+        if err := db.Close(); err != nil {
+            t.Fatalf("Error closing database: %v", err)
+        }
+    }()
 
     // Вставляем тестового пользователя без указания is_active
     _, err = db.Exec("INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length) VALUES ('testuser', 12345, 67890, 10)")

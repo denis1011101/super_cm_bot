@@ -60,7 +60,9 @@ func RunMigrations(db *sql.DB) error {
             // Выполняем SQL миграции
             _, err = tx.Exec(migration.SQL)
             if err != nil {
-                tx.Rollback()
+                if rbErr := tx.Rollback(); rbErr != nil {
+                    log.Printf("Error on transaction rollback: %v", rbErr)
+                }
                 log.Printf("Error executing migration %d: %v", migration.ID, err)
                 return err
             }
@@ -68,7 +70,9 @@ func RunMigrations(db *sql.DB) error {
             // Записываем информацию о применённой миграции
             _, err = tx.Exec("INSERT INTO migrations (id, name) VALUES (?, ?)", migration.ID, migration.Name)
             if err != nil {
-                tx.Rollback()
+                if rbErr := tx.Rollback(); rbErr != nil {
+                    log.Printf("Error on transaction rollback: %v", rbErr)
+                }
                 log.Printf("Error recording migration %d: %v", migration.ID, err)
                 return err
             }

@@ -65,7 +65,9 @@ func InitDB() (*sql.DB, error) {
 		);`
 		_, err = db.Exec(createTableQuery)
 		if err != nil {
-			db.Close() // Закрываем базу данных при ошибке
+			if closeErr := db.Close(); closeErr != nil {
+				log.Printf("Error closing database: %v", closeErr)
+			}
 			log.Printf("Error creating table: %v", err)
 			return nil, err
 		}
@@ -74,7 +76,9 @@ func InitDB() (*sql.DB, error) {
 		createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
 		_, err = db.Exec(createIndexQuery)
 		if err != nil {
-			db.Close() // Закрываем базу данных при ошибке
+			if closeErr := db.Close(); closeErr != nil {
+				log.Printf("Error closing database: %v", closeErr)
+			}
 			log.Printf("Error creating index: %v", err)
 			return nil, err
 		}
@@ -82,19 +86,23 @@ func InitDB() (*sql.DB, error) {
         // Создание индекса для tg_pen_id
         createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
         _, err = db.Exec(createIndexQuery)
-        if err != nil {
-            db.Close() // Закрываем базу данных при ошибке
-            log.Printf("Error creating index: %v", err)
-            return nil, err
-        }
+		if err != nil {
+			if closeErr := db.Close(); closeErr != nil {
+				log.Printf("Error closing database: %v", closeErr)
+			}
+			log.Printf("Error creating index: %v", err)
+			return nil, err
+		}
 
         // Запускаем миграции
         err = RunMigrations(db)
-        if err != nil {
-            db.Close()
-            log.Printf("Error running migrations: %v", err)
-            return nil, err
-        }
+		if err != nil {
+			if closeErr := db.Close(); closeErr != nil {
+				log.Printf("Error closing database: %v", closeErr)
+			}
+			log.Printf("Error running migrations: %v", err)
+			return nil, err
+		}
 
         log.Println("Database and table and index created successfully")
         return db, nil
@@ -111,6 +119,9 @@ func InitDB() (*sql.DB, error) {
 	createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
 	_, err = db.Exec(createIndexQuery)
 	if err != nil {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("Error closing database: %v", closeErr)
+		}
 		log.Printf("Error creating index: %v", err)
 		return nil, err
 	}
@@ -119,7 +130,9 @@ func InitDB() (*sql.DB, error) {
 	createIndexQuery = `CREATE INDEX IF NOT EXISTS idx_tg_pen_id ON pens(tg_pen_id);`
 	_, err = db.Exec(createIndexQuery)
 	if err != nil {
-		db.Close() // Закрываем базу данных при ошибке
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("Error closing database: %v", closeErr)
+		}
 		log.Printf("Error creating index: %v", err)
 		return nil, err
 	}
@@ -128,11 +141,13 @@ func InitDB() (*sql.DB, error) {
 
     // Запускаем миграции для существующей базы данных
     err = RunMigrations(db)
-    if err != nil {
-        db.Close()
-        log.Printf("Error running migrations: %v", err)
-        return nil, err
-    }
+	if err != nil {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Printf("Error closing database: %v", closeErr)
+		}
+		log.Printf("Error running migrations: %v", err)
+		return nil, err
+	}
 
 	// Установка режима журнала WAL
 	_, err = db.Exec("PRAGMA journal_mode = WAL;")
@@ -162,7 +177,11 @@ func GetPenNames(db *sql.DB, chatID int64) ([]Member, error) {
     if err != nil {
         return nil, err
     }
-    defer rows.Close()
+    defer func() {
+        if closeErr := rows.Close(); closeErr != nil {
+            log.Printf("Error closing rows: %v", closeErr)
+        }
+    }()
 
     var members []Member
     for rows.Next() {
@@ -172,6 +191,9 @@ func GetPenNames(db *sql.DB, chatID int64) ([]Member, error) {
             return nil, err
         }
         members = append(members, member)
+    }
+    if err := rows.Err(); err != nil {
+        return nil, err
     }
     log.Printf("Active members list: %v", members)
     return members, nil
@@ -256,7 +278,9 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 	_, err = tx.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
 	if err != nil {
 		log.Printf("Error updating giga count: %v", err)
-        tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Error on transaction rollback: %v", rbErr)
+		}
 	} else {
 		log.Printf("Successfully updated giga count for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
 	}
@@ -268,10 +292,12 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
 	}
 
 	// Подтверждаем транзакцию
-    err = tx.Commit();
+	err = tx.Commit()
 	if err != nil {
 		log.Printf("Error committing transaction: %v", err)
-        tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Error on transaction rollback: %v", rbErr)
+		}
 	}
 }
 
@@ -299,7 +325,9 @@ func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
 	_, err = tx.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
 	if err != nil {
 		log.Printf("Error updating unhandsome count and last_update_at: %v", err)
-        tx.Rollback()
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Error on transaction rollback: %v", rbErr)
+		}
 	} else {
 		log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
 	}
@@ -311,11 +339,13 @@ func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
 	}
 
     // Подтверждаем транзакцию
-    err = tx.Commit();
-    if err != nil {
-        log.Printf("Error committing transaction: %v", err)
-        tx.Rollback()
-    }
+	err = tx.Commit()
+	if err != nil {
+		log.Printf("Error committing transaction: %v", err)
+		if rbErr := tx.Rollback(); rbErr != nil {
+			log.Printf("Error on transaction rollback: %v", rbErr)
+		}
+	}
 }
 
 func UpdateUnhandsomeLastUpdate(db SQLExecutor, chatID int64) error {
@@ -393,7 +423,11 @@ func backupDatabase() error {
 	if err != nil {
 		return fmt.Errorf("failed to open source database: %v", err)
 	}
-	defer srcDB.Close()
+	defer func() {
+		if closeErr := srcDB.Close(); closeErr != nil {
+			log.Printf("Error closing source database: %v", closeErr)
+		}
+	}()
 
     // Выполнение резервного копирования с использованием команды VACUUM INTO
     _, err = srcDB.Exec(fmt.Sprintf("VACUUM INTO '%s';", backupFile))
