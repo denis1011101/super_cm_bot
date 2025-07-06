@@ -35,7 +35,7 @@ go run main.go
 
 1. Run tests:
 ```sh
-go test -count=1 ./tests
+go test -timeout=60s -count=1 ./tests
 ```
 
 ## Manual testing
