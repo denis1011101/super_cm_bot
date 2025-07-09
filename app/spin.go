@@ -94,12 +94,18 @@ func calculateResult(pen Pen, needAdd bool, needDiff bool) SpinpenResult {
 	}
 }
 
+const magicNumber = 9900000
+
 func needReset(pen Pen) bool {
 	min := pen.Size * 10000
 	max := 10000000
 	randomNumber := rand.Intn(max-min+1) + min
-	log.Printf("Random number for reset check: %d", randomNumber)
-	needReset := randomNumber > 9900000
+	// Вычисляем шанс обнуления
+    possible := max - min + 1
+    resetChance := float64(max - magicNumber) / float64(possible) * 100
+    log.Printf("Random number for reset check: %d", randomNumber)
+    log.Printf("Chance to reset (need randomNumber > %d): %.5f%%", magicNumber, resetChance)
+	needReset := randomNumber > magicNumber
 	log.Printf("Need reset: %v", needReset)
 	return needReset
 }
