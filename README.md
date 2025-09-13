@@ -61,10 +61,15 @@ The bot supports the following commands:
 
 ## Administrative
 
-To restart the bot every hours, add the following cron job:
+To check update version every hour, add the following cron job:
 
 ```sh
 0 * * * * cd /root/apps/super_cm_bot && scripts/restart_bot.sh
+```
+
+To build new version, run command:
+```sh
+./scripts/build.sh
 ```
 
 ## License

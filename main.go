@@ -113,6 +113,9 @@ func main() {
 	// Вызов функции проверки не обнулилась ли база в отдельной горутине
 	app.CheckPenLength(db)
 
+	// Запуск еженедельного актуализирования pen_name
+	app.StartPenNameUpdateRoutine(db, bot)
+
 	// Запуск еженедельного архивирования неактивных пользователей
 	app.StartArchiveRoutine(db)
 

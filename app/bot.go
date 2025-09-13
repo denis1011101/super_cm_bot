@@ -54,6 +54,106 @@ func ArchiveInactiveUsers(db *sql.DB) error {
 	return nil
 }
 
+// RefreshUsernames пробегает всех пользователей в таблице pens и обновляет pen_name,
+// если Telegram API вернул отличный username. В случае ошибки оставляет прежний.
+func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
+    rows, err := db.Query("SELECT tg_pen_id, tg_chat_id, pen_name FROM pens WHERE tg_pen_id > 0")
+    if err != nil {
+        log.Printf("RefreshUsernames: failed to query pens: %v", err)
+        return err
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var userID int64
+        var chatID int64
+        var oldName sql.NullString
+        if err := rows.Scan(&userID, &chatID, &oldName); err != nil {
+            log.Printf("RefreshUsernames: row scan error: %v", err)
+            continue
+        }
+
+        // Запрашиваем информацию о пользователе в чате
+        cfg := tgbotapi.GetChatMemberConfig{
+            ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
+                ChatID: chatID,
+                UserID: userID,
+            },
+        }
+        member, err := bot.GetChatMember(cfg)
+        if err != nil {
+            log.Printf("RefreshUsernames: GetChatMember failed for user %d in chat %d: %v", userID, chatID, err)
+            // не обновляем, оставляем старое имя
+            time.Sleep(100 * time.Millisecond) // небольшой респит, чтобы не спамить API
+            continue
+        }
+
+        newName := member.User.UserName
+        if newName == "" {
+            // если у пользователя нет username — пропускаем
+            time.Sleep(100 * time.Millisecond)
+            continue
+        }
+
+        if !oldName.Valid || newName != oldName.String {
+            _, err := db.Exec("UPDATE pens SET pen_name = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newName, userID, chatID)
+            if err != nil {
+                log.Printf("RefreshUsernames: failed to update pen_name for user %d chat %d: %v", userID, chatID, err)
+            } else {
+                log.Printf("RefreshUsernames: updated pen_name for user %d in chat %d: %s -> %s", userID, chatID, oldName.String, newName)
+            }
+        }
+
+        // Небольшая пауза между запросами к API
+        time.Sleep(100 * time.Millisecond)
+    }
+
+    if err := rows.Err(); err != nil {
+        log.Printf("RefreshUsernames: rows iteration error: %v", err)
+        return err
+    }
+    return nil
+}
+
+// StartPenNameUpdateRoutine запускает горутину для еженедельного актуализирования pen_name
+func StartPenNameUpdateRoutine(db *sql.DB, bot *tgbotapi.BotAPI) {
+    go func() {
+        log.Printf("Pen name update routine started")
+
+        // Первый запуск: дождаться ближайшего понедельника 06:00
+        now := time.Now()
+
+        // Вычисляем дни до следующего понедельника (Monday == 1)
+        daysUntilMonday := (1 - int(now.Weekday()) + 7) % 7
+        if daysUntilMonday == 0 && now.Hour() >= 6 {
+            // Если сегодня понедельник и время уже прошло 6:00, ждём до следующего понедельника
+            daysUntilMonday = 7
+        }
+
+        nextMonday := now.AddDate(0, 0, daysUntilMonday)
+        nextMonday = time.Date(nextMonday.Year(), nextMonday.Month(), nextMonday.Day(), 6, 0, 0, 0, nextMonday.Location())
+
+        // Ждём до первого запуска
+        timeUntilNext := time.Until(nextMonday)
+        log.Printf("Pen name update routine will start at: %s (in %v)", nextMonday.Format("2006-01-02 15:04:05"), timeUntilNext)
+        time.Sleep(timeUntilNext)
+
+        // Запускаем обновление каждую неделю в понедельник 06:00
+        for {
+            log.Printf("Starting pen name update job...")
+
+            if err := RefreshUsernames(db, bot); err != nil {
+                log.Printf("Error updating pen names: %v", err)
+            } else {
+                log.Printf("Pen names updated successfully")
+            }
+
+            log.Printf("Next pen name update will run in 7 days")
+            time.Sleep(7 * 24 * time.Hour)
+        }
+    }()
+}
+
 // StartArchiveRoutine запускает горутину для еженедельного архивирования
 func StartArchiveRoutine(db *sql.DB) {
     go func() {
