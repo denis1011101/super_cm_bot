@@ -62,7 +62,11 @@ func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
         log.Printf("RefreshUsernames: failed to query pens: %v", err)
         return err
     }
-    defer rows.Close()
+    defer func() {
+        if err := rows.Close(); err != nil {
+            log.Printf("RefreshUsernames: failed to close rows: %v", err)
+        }
+    }()
 
     for rows.Next() {
         var userID int64
