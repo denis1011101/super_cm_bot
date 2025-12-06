@@ -151,6 +151,12 @@ func main() {
 				} else { // Обработка обычных сообщений
 					handlers.HandlePenCommand(update, bot, db)
 				}
+
+				
+                // Попытаться мгновенно ответить через минимальную Gemini-модель,
+                // но только если с последнего ответа прошло >= 30 минут.
+                _ = app.TryGeminiRespond(update, bot, specificChatID)
+				
 			} else if update.MyChatMember != nil { // Обработка добавления бота в чат
 				handlers.HandleBotAddition(update, bot)
 			}
