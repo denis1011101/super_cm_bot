@@ -23,13 +23,11 @@ const (
 )
 
 var (
+    // use a local RNG seeded once to avoid calling deprecated rand.Seed
+    rng        = rand.New(rand.NewSource(time.Now().UnixNano()))
     geminiMu   sync.Mutex
     geminiLast = make(map[int64]time.Time)
 )
-
-func init() {
-    rand.Seed(time.Now().UnixNano())
-}
 
 // TryGeminiRespond пытается сразу ответить на сообщение в targetChatID.
 // Отвечает в диапазоне 30..60 минут для каждого чата.
@@ -57,7 +55,7 @@ func TryGeminiRespond(update tgbotapi.Update, bot *tgbotapi.BotAPI, targetChatID
         return false
     }
     // резервируем слот: вычисляем случайный cooldown в диапазоне 30..60 минут
-    extraMinutes := rand.Intn(int(geminiMaxExtra/time.Minute) + 1) // 0..30
+    extraMinutes := rng.Intn(int(geminiMaxExtra/time.Minute) + 1) // 0..30
     cooldown := geminiMinCooldown + time.Duration(extraMinutes)*time.Minute
     geminiLast[targetChatID] = time.Now().Add(cooldown)
     geminiMu.Unlock()
@@ -110,7 +108,7 @@ func respondWithGemini(m tgbotapi.Message, bot *tgbotapi.BotAPI) error {
 // getPersonas возвращает system instruction и подготовленный user message.
 func getPersonas(userText string) (string, string) {
     styles := []string{"bandit", "flirty", "sexy-bandit", "neutral"}
-    style := styles[rand.Intn(len(styles))]
+    style := styles[rng.Intn(len(styles))]
 
     var sys strings.Builder
 
@@ -177,7 +175,7 @@ func callLLM(systemPrompt, userPrompt string) (string, error) {
     model = strings.TrimSuffix(model, "-latest")
 
     // pick API version:
-    apiVer := "v1"
+    var apiVer string
     if strings.HasPrefix(model, "gemini-2.") {
         apiVer = "v1beta"
     } else {
@@ -207,11 +205,15 @@ func callLLM(systemPrompt, userPrompt string) (string, error) {
     if err != nil {
         return "", err
     }
-    defer resp.Body.Close()
+    defer func() {
+        if cerr := resp.Body.Close(); cerr != nil {
+            log.Printf("callLLM: resp.Body.Close error: %v", cerr)
+        }
+    }()
 
     body, _ := io.ReadAll(resp.Body)
     if resp.StatusCode != http.StatusOK {
-        return "", fmt.Errorf("Google API Error (Status %d): %s", resp.StatusCode, string(body))
+        return "", fmt.Errorf("google API error (status %d): %s", resp.StatusCode, string(body))
     }
 
     var gr GeminiResponse

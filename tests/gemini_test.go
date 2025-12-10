@@ -30,7 +30,7 @@ var geminiLast map[int64]time.Time
 
 func TestCallLLM_NoAPIKey(t *testing.T) {
     orig := os.Getenv("GEMINI_API_KEY")
-    defer os.Setenv("GEMINI_API_KEY", orig)
+    defer func() { _ = os.Setenv("GEMINI_API_KEY", orig) }()
 
     _ = os.Unsetenv("GEMINI_API_KEY")
     _, err := callLLM("sys", "hello")
