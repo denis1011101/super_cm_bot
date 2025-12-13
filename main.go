@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"strings"
 
 	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/app/handlers"
@@ -140,26 +141,39 @@ func main() {
 		"/topunh":                             handlers.TopUnhandsome,
 	}
 
-	// Обработка обновлений
-	for update := range updates {
-		if update.Message != nil {
-			chatID := update.Message.Chat.ID
-			if chatID == specificChatID {
-				// Обработка команд
-				if handler, exists := commandHandlers[update.Message.Text]; exists {
-					handler(update, bot, db)
-				} else { // Обработка обычных сообщений
-					handlers.HandlePenCommand(update, bot, db)
-				}
+    // Обработка обновлений
+    for update := range updates {
+        if update.Message != nil {
+            chatID := update.Message.Chat.ID
+            if chatID == specificChatID {
+                // Обработка команд
+                if handler, exists := commandHandlers[update.Message.Text]; exists {
+                    handler(update, bot, db)
+                } else { // Обработка обычных сообщений
+                    handlers.HandlePenCommand(update, bot, db)
+                }
 
-				
-                // Попытаться мгновенно ответить через минимальную Gemini-модель,
-                // но только если с последнего ответа прошло >= 30 минут.
-                _ = app.TryGeminiRespond(update, bot, specificChatID)
-				
-			} else if update.MyChatMember != nil { // Обработка добавления бота в чат
-				handlers.HandleBotAddition(update, bot)
-			}
-		}
-	}
+                // сначала: если нас тегают или отвечают на наше сообщение -> immediate Gemini
+                isMention := false
+                if update.Message.Text != "" && bot != nil && bot.Self.UserName != "" {
+                    isMention = strings.Contains(update.Message.Text, "@"+bot.Self.UserName)
+                }
+                isReplyToBot := update.Message.ReplyToMessage != nil &&
+                    update.Message.ReplyToMessage.From != nil &&
+                    bot != nil &&
+                    update.Message.ReplyToMessage.From.ID == bot.Self.ID
+
+                if isMention || isReplyToBot {
+                    // вызов немедленного ответа (без основного cooldown)
+                    _ = app.TryGeminiRespondImmediate(*update.Message, bot)
+                } else {
+                    // обычная логика по таймеру/слоту
+                    _ = app.TryGeminiRespond(update, bot, specificChatID)
+                }
+
+            } else if update.MyChatMember != nil { // Обработка добавления бота в чат
+                handlers.HandleBotAddition(update, bot)
+            }
+        }
+    }
 }

@@ -22,6 +22,10 @@ func getPersonas(userText string) (string, string)
 //go:linkname TryGeminiRespond github.com/denis1011101/super_cm_bot/app.TryGeminiRespond
 func TryGeminiRespond(update tgbotapi.Update, bot *tgbotapi.BotAPI, targetChatID int64) bool
 
+// add linkname for immediate responder
+//go:linkname TryGeminiRespondImmediate github.com/denis1011101/super_cm_bot/app.TryGeminiRespondImmediate
+func TryGeminiRespondImmediate(m tgbotapi.Message, bot *tgbotapi.BotAPI) bool
+
 //go:linkname respondWithGemini github.com/denis1011101/super_cm_bot/app.respondWithGemini
 func respondWithGemini(m tgbotapi.Message, bot *tgbotapi.BotAPI) error
 
@@ -168,4 +172,79 @@ func index(s, sep string) int {
         }
     }
     return -1
+}
+
+// test for immediate responder
+func TestTryGeminiRespondImmediate_BasicChecks(t *testing.T) {
+    orig := os.Getenv("GEMINI_API_KEY")
+    defer func() { _ = os.Setenv("GEMINI_API_KEY", orig) }()
+
+    // ensure no API key so goroutine won't try to call external API
+    _ = os.Unsetenv("GEMINI_API_KEY")
+
+    now := time.Now()
+
+    cases := []struct {
+        name string
+        msg  tgbotapi.Message
+        want bool
+    }{
+        {
+            "from_bot",
+            tgbotapi.Message{From: &tgbotapi.User{IsBot: true}, Text: "hi", Date: int(now.Unix())},
+            false,
+        },
+        {
+            "empty_text",
+            tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "   ", Date: int(now.Unix())},
+            false,
+        },
+        {
+            "command",
+            tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "/start", Date: int(now.Unix())},
+            false,
+        },
+        {
+            "old_message",
+            tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "hey", Date: int(now.Add(-10 * time.Minute).Unix())},
+            false,
+        },
+        {
+            "valid",
+            tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "hello", Date: int(now.Unix())},
+            true,
+        },
+    }
+
+    for _, c := range cases {
+        t.Run(c.name, func(t *testing.T) {
+            got := TryGeminiRespondImmediate(c.msg, nil)
+            if got != c.want {
+                t.Fatalf("case %s: got %v want %v", c.name, got, c.want)
+            }
+        })
+    }
+}
+
+func TestTryGeminiRespondImmediate_DoesNotAffectGeminiLast(t *testing.T) {
+    // prepare geminiLast with a value
+    geminiLast = make(map[int64]time.Time)
+    chatID := int64(4242)
+    prev := time.Now().Add(1 * time.Hour)
+    geminiLast[chatID] = prev
+
+    msg := tgbotapi.Message{
+        Chat: &tgbotapi.Chat{ID: chatID},
+        From: &tgbotapi.User{IsBot: false},
+        Text: "hello",
+        Date: int(time.Now().Unix()),
+    }
+
+    _ = TryGeminiRespondImmediate(msg, nil)
+
+    if got, ok := geminiLast[chatID]; !ok {
+        t.Fatalf("geminiLast entry removed unexpectedly")
+    } else if !got.Equal(prev) {
+        t.Fatalf("geminiLast changed by immediate responder: got %v want %v", got, prev)
+    }
 }

@@ -285,3 +285,30 @@ func parseTextFromGenericResponse(b []byte) string {
     }
     return ""
 }
+
+// TryGeminiRespondImmediate отвечает сразу, игнорируя основной cooldown.
+// Используется для упоминаний бота (mention) и ответов на сообщение бота (reply).
+// Возвращает true если запустили обработку.
+func TryGeminiRespondImmediate(m tgbotapi.Message, bot *tgbotapi.BotAPI) bool {
+    if m.From != nil && m.From.IsBot {
+        return false
+    }
+    text := strings.TrimSpace(m.Text)
+    if text == "" || strings.HasPrefix(text, "/") {
+        return false
+    }
+
+    // Не отвечать на слишком старые сообщения
+    msgTime := time.Unix(int64(m.Date), 0)
+    if time.Since(msgTime) > 5*time.Minute {
+        return false
+    }
+
+    go func(msg tgbotapi.Message) {
+        if err := respondWithGemini(msg, bot); err != nil {
+            log.Printf("TryGeminiRespondImmediate: llm/send error: %v", err)
+        }
+    }(m)
+
+    return true
+}
