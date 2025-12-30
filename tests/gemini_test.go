@@ -254,7 +254,8 @@ func TestTryGeminiRespondImmediate_DoesNotAffectGeminiLast(t *testing.T) {
 // вариантов с BEGINNING и END, и указание эмодзи.
 func TestGetPersonas_HolidayBehavior(t *testing.T) {
     now := time.Now()
-    if !((now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2)) {
+    isHoliday := (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2)
+    if !isHoliday {
         t.Skip("not holiday period; skipping holiday-specific test")
     }
 

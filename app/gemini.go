@@ -133,10 +133,11 @@ func getPersonas(userText string) (string, string) {
     if (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2) {
         // pos: 0 = no greeting (1/3), 1 = greeting at beginning (1/3), 2 = greeting at end (1/3)
         pos := rng.Intn(3)
-        if pos == 1 {
+        switch pos {
+        case 1:
             sys.WriteString("HOLIDAY: It's New Year season. Include a brief (one-sentence) New Year congratulation AT THE BEGINNING of your reply (in the same language as the user). ")
             sys.WriteString("Use 1-2 New Year emojis (🎄, 🎉, 🥂, 🎆, ✨) with the greeting, matching the message tone. ")
-        } else if pos == 2 {
+        case 2:
             sys.WriteString("HOLIDAY: It's New Year season. Include a brief (one-sentence) New Year congratulation AT THE END of your reply (in the same language as the user). ")
             sys.WriteString("Use 1-2 New Year emojis (🎄, 🎉, 🥂, 🎆, ✨) with the greeting, matching the message tone. ")
         }
