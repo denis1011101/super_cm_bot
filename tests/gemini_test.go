@@ -4,6 +4,7 @@ import (
     "os"
     "testing"
     "time"
+    "strings"
     _ "unsafe"
     _ "github.com/denis1011101/super_cm_bot/app"
     tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -246,5 +247,50 @@ func TestTryGeminiRespondImmediate_DoesNotAffectGeminiLast(t *testing.T) {
         t.Fatalf("geminiLast entry removed unexpectedly")
     } else if !got.Equal(prev) {
         t.Fatalf("geminiLast changed by immediate responder: got %v want %v", got, prev)
+    }
+}
+
+// Новогодний тест: в праздничный период ожидаем появление HOLIDAY-инструкций (в ~2/3 случаев),
+// вариантов с BEGINNING и END, и указание эмодзи.
+func TestGetPersonas_HolidayBehavior(t *testing.T) {
+    now := time.Now()
+    if !((now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2)) {
+        t.Skip("not holiday period; skipping holiday-specific test")
+    }
+
+    runs := 120
+    foundHoliday := 0
+    foundBegin := 0
+    foundEnd := 0
+    emojis := []string{"🎄", "🎉", "🥂", "🎆", "✨"}
+
+    for i := 0; i < runs; i++ {
+        sys, _ := getPersonas("hello")
+        if strings.Contains(sys, "HOLIDAY") {
+            foundHoliday++
+            if strings.Contains(sys, "BEGINNING") {
+                foundBegin++
+            }
+            if strings.Contains(sys, "END") {
+                foundEnd++
+            }
+            hasEmoji := false
+            for _, e := range emojis {
+                if strings.Contains(sys, e) {
+                    hasEmoji = true
+                    break
+                }
+            }
+            if !hasEmoji {
+                t.Fatalf("holiday instruction without emojis: %q", sys)
+            }
+        }
+    }
+
+    if foundHoliday == 0 {
+        t.Fatalf("no HOLIDAY instruction observed in %d runs", runs)
+    }
+    if foundBegin == 0 || foundEnd == 0 {
+        t.Fatalf("expected both BEGINNING and END variants, got begin=%d end=%d", foundBegin, foundEnd)
     }
 }
