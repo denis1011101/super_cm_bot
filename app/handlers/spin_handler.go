@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	mathrand "math/rand"
+	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -42,14 +44,25 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		return
 	}
 
-	// Выполнение спина
-	result := app.SpinPenSize(pen)
-	log.Printf("Spin result: %+v", result)
+    // Выполнение спина
+    result := app.SpinPenSize(pen)
+    log.Printf("Spin result: %+v", result)
 
-	// Обновление размера  и времени последнего обновления в базе данных
-	newSize := pen.Size + result.Size
-	app.UpdateUserPen(db, userID, chatID, newSize)
-	log.Printf("Updated pen size: %d", newSize)
+    // Holiday multiplier: в период 24 Dec..31 Dec и 1..2 Jan в 2/3 случаев умножаем результат спина на случайный 1..5
+    now := time.Now()
+    if (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2) {
+        pos := mathrand.Intn(3) // 0 = no multiplier (1/3), 1..2 = apply multiplier (2/3)
+        if pos != 0 {
+            mul := mathrand.Intn(5) + 1 // 1..5
+            result.Size = result.Size * mul
+            log.Printf("Holiday multiplier applied to spin: x%d (new result.Size=%d)", mul, result.Size)
+        }
+    }
+    
+    // Обновление размера  и времени последнего обновления в базе данных
+    newSize := pen.Size + result.Size
+    app.UpdateUserPen(db, userID, chatID, newSize)
+    log.Printf("Updated pen size: %d", newSize)
 
 	//Отправка ответного сообщения
 	var responseText string
