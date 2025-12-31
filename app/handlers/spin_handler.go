@@ -79,7 +79,10 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 			responseText = fmt.Sprintf("+4 воу чел! Я смотрю ты подходишь к делу серьезно 😎 Твой новогодний сайз: %d см", newSize)
 		case 5:
 			responseText = fmt.Sprintf("Это RAMPAGE🔥 +5 АУФ волчара 🐺 Твой новогодний сайз: %d см", newSize)
-		}
+        default:
+            // Обработка больших прибавок (например из-за множителя)
+            responseText = fmt.Sprintf("+%d это охуенно! Твой новогодний сайз: %d см", result.Size, newSize)
+        }
 	case "DIFF":
 		switch result.Size {
 		case -1:
@@ -92,7 +95,10 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 			responseText = fmt.Sprintf("-4 не переживай, до свадьбы отрастет 🤥 Твой новогодний сайз: %d см", newSize)
 		case -5:
 			responseText = fmt.Sprintf("У тебя -5, петушара🐓 И я не шучу. Твой новогодний сайз: %d см", newSize)
-		}
+        default:
+            // Обработка больших потерь
+            responseText = fmt.Sprintf("%d — серьёзный удар, но ты всё ещё в игре. Твой новогодний сайз: %d см", result.Size, newSize)
+        }
 	case "RESET":
 		responseText = fmt.Sprintf("Теперь ты просто пезда. Твой новогодний сайз: %d см", newSize)
 	case "ZERO":
