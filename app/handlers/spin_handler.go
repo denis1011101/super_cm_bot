@@ -70,33 +70,33 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	case "ADD":
 		switch result.Size {
 		case 1:
-			responseText = fmt.Sprintf("+1 и все. Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("+1 и все. Твой новогодний сайз: %d см", newSize)
 		case 2:
-			responseText = fmt.Sprintf("+2 это уже лучше чем +1 🤡 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("+2 это уже лучше чем +1 🤡 Твой новогодний сайз: %d см", newSize)
 		case 3:
-			responseText = fmt.Sprintf("+3 на повышение идешь?🍆 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("+3 на повышение идешь?🍆 Твой новогодний сайз: %d см", newSize)
 		case 4:
-			responseText = fmt.Sprintf("+4 воу чел! Я смотрю ты подходишь к делу серьезно 😎 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("+4 воу чел! Я смотрю ты подходишь к делу серьезно 😎 Твой новогодний сайз: %d см", newSize)
 		case 5:
-			responseText = fmt.Sprintf("Это RAMPAGE🔥 +5 АУФ волчара 🐺 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("Это RAMPAGE🔥 +5 АУФ волчара 🐺 Твой новогодний сайз: %d см", newSize)
 		}
 	case "DIFF":
 		switch result.Size {
 		case -1:
-			responseText = fmt.Sprintf("-1 ты чё, пидр? Да я шучу. Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-1 ты чё, пидр? Да я шучу. Твой новогодний сайз: %d см", newSize)
 		case -2:
-			responseText = fmt.Sprintf("-2 не велика потеря, бро 🥸 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-2 не велика потеря, бро 🥸 Твой новогодний сайз: %d см", newSize)
 		case -3:
-			responseText = fmt.Sprintf("-3 это хуже чем +1 🤡 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-3 это хуже чем +1 🤡 Твой новогодний сайз: %d см", newSize)
 		case -4:
-			responseText = fmt.Sprintf("-4 не переживай, до свадьбы отрастет 🤥 Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-4 не переживай, до свадьбы отрастет 🤥 Твой новогодний сайз: %d см", newSize)
 		case -5:
-			responseText = fmt.Sprintf("У тебя -5, петушара🐓 И я не шучу. Твой сайз: %d см", newSize)
+			responseText = fmt.Sprintf("У тебя -5, петушара🐓 И я не шучу. Твой новогодний сайз: %d см", newSize)
 		}
 	case "RESET":
-		responseText = fmt.Sprintf("Теперь ты просто пезда. Твой сайз: %d см", newSize)
+		responseText = fmt.Sprintf("Теперь ты просто пезда. Твой новогодний сайз: %d см", newSize)
 	case "ZERO":
-		responseText = fmt.Sprintf("Чеееел... у тебя 0 см прибавилось. Твой сайз: %d см", newSize)
+		responseText = fmt.Sprintf("Чеееел... у тебя 0 см прибавилось. Твой новогодний сайз: %d см", newSize)
 	}
 
 	log.Printf("Response text: %s", responseText)
