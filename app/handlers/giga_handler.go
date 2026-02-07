@@ -180,7 +180,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	addSize = min(addSize, 15)
-	addSize = max(addSize, 0)
+	addSize = max(addSize, 1)
 
 	// Holiday multiplier: в период 24 Dec..31 Dec и 1..2 Jan в 2/3 случаев умножаем addSize на случайный 1..5
 	if isHoliday {
