@@ -86,6 +86,9 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		return
 	}
 
+	now := time.Now()
+	isHoliday := (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2)
+
 	// Проверка времени последнего обновления
 	shouldReturn := checkIsSpinNotLegal(lastUpdate)
 	if shouldReturn { // TODO: Добавить вывод Сегодня альфа самец @%s и никто его не заменит!
@@ -98,7 +101,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		if err := app.UpdateGigaLastUpdate(db, chatID); err != nil {
 			log.Printf("Error updating giga last update: %v", err)
 		}
-		message := messagegenerators.GetSkipGigaMessage()
+		message := messagegenerators.GetSkipGigaMessage(isHoliday)
 		app.SendMessage(chatID, message, bot, update.Message.MessageID)
 		return
 	}
@@ -179,9 +182,8 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	addSize = min(addSize, 15)
 	addSize = max(addSize, 0)
 
-    // Holiday multiplier: в период 24 Dec..31 Dec и 1..2 Jan в 2/3 случаев умножаем addSize на случайный 1..5
-    now := time.Now()
-    if (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2) {
+	// Holiday multiplier: в период 24 Dec..31 Dec и 1..2 Jan в 2/3 случаев умножаем addSize на случайный 1..5
+	if isHoliday {
         pos := mathrand.Intn(3) // 0 = no multiplier (1/3), 1..2 = apply multiplier (2/3)
         if pos != 0 {
             mul := mathrand.Intn(5) + 1 // 1..5
@@ -198,7 +200,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	app.UpdateGiga(db, newSize, randomMember.ID, chatID)
 
 	// Генерируем сообщени для чата
-	message := messagegenerators.GetRandomGigaMessage(randomMember.Name, addSize, newSize)
+	message := messagegenerators.GetRandomGigaMessage(randomMember.Name, addSize, newSize, isHoliday)
 
 	// Отправка сообщения с именем выбранного "красавчика"
 	app.SendMessage(chatID, message, bot, update.Message.MessageID)

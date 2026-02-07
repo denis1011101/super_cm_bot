@@ -44,65 +44,71 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 		return
 	}
 
-    // Выполнение спина
-    result := app.SpinPenSize(pen)
-    log.Printf("Spin result: %+v", result)
+	// Выполнение спина
+	result := app.SpinPenSize(pen)
+	log.Printf("Spin result: %+v", result)
 
-    // Holiday multiplier: в период 24 Dec..31 Dec и 1..2 Jan в 2/3 случаев умножаем результат спина на случайный 1..5
-    now := time.Now()
-    if (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2) {
-        pos := mathrand.Intn(3) // 0 = no multiplier (1/3), 1..2 = apply multiplier (2/3)
-        if pos != 0 {
-            mul := mathrand.Intn(5) + 1 // 1..5
-            result.Size = result.Size * mul
-            log.Printf("Holiday multiplier applied to spin: x%d (new result.Size=%d)", mul, result.Size)
-        }
-    }
-    
-    // Обновление размера  и времени последнего обновления в базе данных
-    newSize := pen.Size + result.Size
-    app.UpdateUserPen(db, userID, chatID, newSize)
-    log.Printf("Updated pen size: %d", newSize)
+	// Holiday multiplier: в период 24 Dec..31 Dec и 1..2 Jan в 2/3 случаев умножаем результат спина на случайный 1..5
+	now := time.Now()
+	isHoliday := (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2)
+	if isHoliday {
+		pos := mathrand.Intn(3) // 0 = no multiplier (1/3), 1..2 = apply multiplier (2/3)
+		if pos != 0 {
+			mul := mathrand.Intn(5) + 1 // 1..5
+			result.Size = result.Size * mul
+			log.Printf("Holiday multiplier applied to spin: x%d (new result.Size=%d)", mul, result.Size)
+		}
+	}
+
+	// Обновление размера  и времени последнего обновления в базе данных
+	newSize := pen.Size + result.Size
+	app.UpdateUserPen(db, userID, chatID, newSize)
+	log.Printf("Updated pen size: %d", newSize)
 
 	//Отправка ответного сообщения
+	sizeLabel := "Твой сайз"
+	if isHoliday {
+		sizeLabel = "Твой новогодний сайз"
+	}
+
 	var responseText string
 	switch result.ResultType {
 	case "ADD":
 		switch result.Size {
 		case 1:
-			responseText = fmt.Sprintf("+1 и все. Твой новогодний сайз: %d см", newSize)
+			responseText = fmt.Sprintf("+1 и все. %s: %d см", sizeLabel, newSize)
 		case 2:
-			responseText = fmt.Sprintf("+2 это уже лучше чем +1 🤡 Твой новогодний сайз: %d см", newSize)
+			responseText = fmt.Sprintf("+2 это уже лучше чем +1 🤡 %s: %d см", sizeLabel, newSize)
 		case 3:
-			responseText = fmt.Sprintf("+3 на повышение идешь?🍆 Твой новогодний сайз: %d см", newSize)
+			responseText = fmt.Sprintf("+3 на повышение идешь?🍆 %s: %d см", sizeLabel, newSize)
 		case 4:
-			responseText = fmt.Sprintf("+4 воу чел! Я смотрю ты подходишь к делу серьезно 😎 Твой новогодний сайз: %d см", newSize)
+			responseText = fmt.Sprintf("+4 воу чел! Я смотрю ты подходишь к делу серьезно 😎 %s: %d см", sizeLabel, newSize)
 		case 5:
-			responseText = fmt.Sprintf("Это RAMPAGE🔥 +5 АУФ волчара 🐺 Твой новогодний сайз: %d см", newSize)
-        default:
-            // Обработка больших прибавок (например из-за множителя)
-            responseText = fmt.Sprintf("+%d это охуенно! Твой новогодний сайз: %d см", result.Size, newSize)
-        }
+			responseText = fmt.Sprintf("Это RAMPAGE🔥 +5 АУФ волчара 🐺 %s: %d см", sizeLabel, newSize)
+		default:
+			// Обработка больших прибавок (например из-за множителя)
+			responseText = fmt.Sprintf("+%d это охуенно! %s: %d см", result.Size, sizeLabel, newSize)
+		}
 	case "DIFF":
 		switch result.Size {
 		case -1:
-			responseText = fmt.Sprintf("-1 ты чё, пидр? Да я шучу. Твой новогодний сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-1 ты чё, пидр? Да я шучу. %s: %d см", sizeLabel, newSize)
 		case -2:
-			responseText = fmt.Sprintf("-2 не велика потеря, бро 🥸 Твой новогодний сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-2 не велика потеря, бро 🥸 %s: %d см", sizeLabel, newSize)
 		case -3:
-			responseText = fmt.Sprintf("-3 это хуже чем +1 🤡 Твой новогодний сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-3 это хуже чем +1 🤡 %s: %d см", sizeLabel, newSize)
 		case -4:
-			responseText = fmt.Sprintf("-4 не переживай, до свадьбы отрастет 🤥 Твой новогодний сайз: %d см", newSize)
+			responseText = fmt.Sprintf("-4 не переживай, до свадьбы отрастет 🤥 %s: %d см", sizeLabel, newSize)
 		case -5:
-			responseText = fmt.Sprintf("У тебя -5, петушара🐓 И я не шучу. Твой новогодний сайз: %d см", newSize)
-        default:
-            // Обработка больших потерь
-            responseText = fmt.Sprintf("%d — серьёзный удар, но ты всё ещё в игре. Твой новогодний сайз: %d см", result.Size, newSize)
-        }
+			responseText = fmt.Sprintf("У тебя -5, петушара🐓 И я не шучу. %s: %d см", sizeLabel, newSize)
+		default:
+			// Обработка больших потерь
+			responseText = fmt.Sprintf("%d — серьёзный удар, но ты всё ещё в игре. %s: %d см", result.Size, sizeLabel, newSize)
+		}
 	case "RESET":
-		responseText = fmt.Sprintf("Теперь ты просто пезда. Твой новогодний сайз: %d см", newSize)
+		responseText = fmt.Sprintf("Теперь ты просто пезда. %s: %d см", sizeLabel, newSize)
 	case "ZERO":
-		responseText = fmt.Sprintf("Чеееел... у тебя 0 см прибавилось. Твой новогодний сайз: %d см", newSize)
+		responseText = fmt.Sprintf("Чеееел... у тебя 0 см прибавилось. %s: %d см", sizeLabel, newSize)
 	}
 
 	log.Printf("Response text: %s", responseText)
