@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"log"
+	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
 	messagegenerators "github.com/denis1011101/super_cm_bot/app/handlers/message_generators"
@@ -26,6 +27,9 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		registerBot(update, bot, db, true)
 	}
 
+	now := time.Now()
+	isHoliday := (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2)
+
 	// Получение времени последнего обновления
 	lastUpdate, err := app.GetUnhandsomeLastUpdateTime(db, chatID)
 	if err != nil {
@@ -44,7 +48,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		if err := app.UpdateUnhandsomeLastUpdate(db, chatID); err != nil {
 			log.Printf("Error updating unhandsome last update: %v", err)
 		}
-		message := messagegenerators.GetSkipUnhandsomeMessage()
+		message := messagegenerators.GetSkipUnhandsomeMessage(isHoliday)
 		app.SendMessage(chatID, message, bot, update.Message.MessageID)
 		return
 	}
@@ -84,7 +88,7 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID)
 
 	// Генерируем сообщение для чата
-	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize)
+	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize, isHoliday)
 
 	// Отправка сообщения с именем выбранного "антикрасавчика"
 	app.SendMessage(chatID, message, bot, update.Message.MessageID)

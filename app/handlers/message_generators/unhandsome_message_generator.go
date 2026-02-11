@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func firstUnhandsomeSet(username string, diffSize int, newSize int) string {
+func firstUnhandsomeSetHoliday(username string, diffSize int, newSize int) string {
 	messages := []string{
 		"Разворачиваю сервис по поиску новогодних пидорасов ✈️",
 		"ping global.pidoras.com...",
@@ -19,7 +19,7 @@ func firstUnhandsomeSet(username string, diffSize int, newSize int) string {
 	return text
 }
 
-func secondUnhandsomeSet(username string, diffSize int, newSize int) string {
+func secondUnhandsomeSetHoliday(username string, diffSize int, newSize int) string {
 	messages := []string{
 		"Начинаю расследование️ 🕵️‍♂️",
 		"Отправляю запрос в антипидорскую службу 📩",
@@ -31,7 +31,7 @@ func secondUnhandsomeSet(username string, diffSize int, newSize int) string {
 	return text
 }
 
-func thirdUnhandsomeSet(username string, diffSize int, newSize int) string {
+func thirdUnhandsomeSetHoliday(username string, diffSize int, newSize int) string {
 	messages := []string{
 		"Сча поищу.",
 		"Первым делом зайду в бар 🍺",
@@ -44,7 +44,46 @@ func thirdUnhandsomeSet(username string, diffSize int, newSize int) string {
 	return text
 }
 
+func firstUnhandsomeSet(username string, diffSize int, newSize int) string {
+	messages := []string{
+		"Разворачиваю сервис по поиску пидорасов ✈️",
+		"ping global.pidoras.com...",
+		"pong 64 bytes from \"zaebal pingovat\"...",
+		"Делаю запрос на поиск 🔎",
+		"О, что-то нашлось...",
+		fmt.Sprintf("Ага, пидор дня @%s! Твой хуй стал короче на %d см. Теперь он %d см.", username, diffSize, newSize),
+	}
+	text := strings.Join(messages, "\n")
+	return text
+}
+
+func secondUnhandsomeSet(username string, diffSize int, newSize int) string {
+	messages := []string{
+		"Начинаю расследование️ 🕵️‍♂️",
+		"Отправляю запрос в антипидорскую службу 📩",
+		"Уточняю координаты объекта 📍",
+		"Избавляюсь от свидетелей 🥷",
+		fmt.Sprintf("Попался, пидор. Мой попу, @%s. Твой хуй стал короче на %d см. Теперь он %d см.", username, diffSize, newSize),
+	}
+	text := strings.Join(messages, "\n")
+	return text
+}
+
+func thirdUnhandsomeSet(username string, diffSize int, newSize int) string {
+	messages := []string{
+		"Сча поищу.",
+		"Первым делом зайду в бар 🍺",
+		"Теперь погнал в клуб 🎉",
+		"Ооо тут ещё казино есть 🎰",
+		"Ёбаный рот этого казино... А? Что? Пидора надо найти? Сча.",
+		fmt.Sprintf("Пусть пидором будет @%s. Твой хуй стал короче на %d см. Теперь он %d см.", username, diffSize, newSize),
+	}
+	text := strings.Join(messages, "\n")
+	return text
+}
+
 var unhandsomeMessageSets []func(username string, diffSize int, newSize int) string = unhandsomeSetsFabric()
+var unhandsomeMessageSetsHoliday []func(username string, diffSize int, newSize int) string = unhandsomeSetsFabricHoliday()
 
 func unhandsomeSetsFabric() []func(username string, diffSize int, newSize int) string {
 	return []func(username string, diffSize int, newSize int) string{
@@ -54,17 +93,38 @@ func unhandsomeSetsFabric() []func(username string, diffSize int, newSize int) s
 	}
 }
 
-func GetRandomUnhandsomeMessage(username string, diffSize int, newSize int) string {
-	spin := rand.Intn(len(unhandsomeMessageSets))
-	message := unhandsomeMessageSets[spin](username, diffSize, newSize)
+func unhandsomeSetsFabricHoliday() []func(username string, diffSize int, newSize int) string {
+	return []func(username string, diffSize int, newSize int) string{
+		firstUnhandsomeSetHoliday,
+		secondUnhandsomeSetHoliday,
+		thirdUnhandsomeSetHoliday,
+	}
+}
+
+func GetRandomUnhandsomeMessage(username string, diffSize int, newSize int, isHoliday bool) string {
+	messageSets := unhandsomeMessageSets
+	if isHoliday {
+		messageSets = unhandsomeMessageSetsHoliday
+	}
+	spin := rand.Intn(len(messageSets))
+	message := messageSets[spin](username, diffSize, newSize)
 	return message
 }
 
-func GetSkipUnhandsomeMessage() string {
+func GetSkipUnhandsomeMessage(isHoliday bool) string {
+	if isHoliday {
+		messages := []string{
+			"Бляяя опять работать...",
+			"Ну давай посмотрим, что у нас тут есть.",
+			"Иди нахуй, сегодня все пидоры. С новым годом!",
+		}
+		text := strings.Join(messages, "\n")
+		return text
+	}
 	messages := []string{
 		"Бляяя опять работать...",
 		"Ну давай посмотрим, что у нас тут есть.",
-		"Иди нахуй, сегодня все пидоры. С новым годом!",
+		"Иди нахуй, сегодня все пидоры.",
 	}
 	text := strings.Join(messages, "\n")
 	return text
