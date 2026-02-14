@@ -1,6 +1,6 @@
 module github.com/denis1011101/super_cm_bot
 
-go 1.23.2
+go 1.26.0
 
 require (
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
