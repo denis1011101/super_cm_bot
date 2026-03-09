@@ -81,7 +81,7 @@ func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	var sb strings.Builder
 	sb.WriteString("Топ 10 по длине пениса:\n")
 	for _, record := range records {
-		sb.WriteString(fmt.Sprintf("@%s: %s %d %s\n", record.pen_name, record.PenComment, record.pen_length, record.PenSm))
+		fmt.Fprintf(&sb, "@%s: %s %d %s\n", record.pen_name, record.PenComment, record.pen_length, record.PenSm)
 	}
 
 	message := sb.String()

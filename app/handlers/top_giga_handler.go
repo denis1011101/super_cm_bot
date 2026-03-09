@@ -77,7 +77,7 @@ func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	var sb strings.Builder
 	sb.WriteString("Топ 10 гигачадов:\n")
 	for _, record := range records {
-		sb.WriteString(fmt.Sprintf("@%s: %d раз. %s\n", record.pen_name, record.handsome_count, record.TopGigaComment))
+		fmt.Fprintf(&sb, "@%s: %d раз. %s\n", record.pen_name, record.handsome_count, record.TopGigaComment)
 	}
 
 	message := sb.String()
