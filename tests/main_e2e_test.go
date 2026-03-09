@@ -55,11 +55,14 @@ func TestBotE2E(t *testing.T) {
 		t.Fatalf("Expected table name 'pens', but got %s", tableName)
 	}
 
-	// Вставляем тестовые данные
+	// Вставляем тестовые данные.
+	// 33333333 добавляем с давней датой — после фикса registerBot ставит CURRENT_TIMESTAMP,
+	// поэтому свежезарегистрированный пользователь немедленно попадает под кулдаун /pen.
 	insertDataQuery := `
     INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, pen_last_update_at, handsome_count, handsome_last_update_at, unhandsome_count, unhandsome_last_update_at)
-    VALUES ('testuser1', 11111111, -987654321, 5, '2024-09-13 08:53:49.959836013+05:00', 10, '2024-09-18 21:04:00.758573552+05:00', 8, '2024-09-18 21:04:21.388000393+05:00'),
-           ('testuser2', 22222222, -987654321, 3, '2024-09-13 08:53:49.959836013+05:00', 5, '2024-09-18 21:04:00.758573552+05:00', 6, '2024-09-18 21:04:21.388000393+05:00');`
+    VALUES ('testuser1', 11111111, -987654321, 5, '2024-09-13 08:53:49+00:00', 10, '2024-09-18 21:04:00+00:00', 8, '2024-09-18 21:04:21+00:00'),
+           ('testuser2', 22222222, -987654321, 3, '2024-09-13 08:53:49+00:00', 5, '2024-09-18 21:04:00+00:00', 6, '2024-09-18 21:04:21+00:00'),
+           ('testuser3', 33333333, -987654321, 5, '2024-09-13 08:53:49+00:00', 0, NULL, 0, NULL);`
 	_, err = db.Exec(insertDataQuery)
 	if err != nil {
 		t.Fatalf("Failed to insert data: %v", err)

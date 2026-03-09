@@ -31,9 +31,9 @@ func ArchiveInactiveUsers(db *sql.DB) error {
 
 	// SQL запрос для обновления неактивных пользователей
 	query := `
-        UPDATE pens 
-        SET is_active = FALSE 
-        WHERE pen_last_update_at < ? 
+        UPDATE pens
+        SET is_active = FALSE
+        WHERE pen_last_update_at < ?
         AND is_active = TRUE
     `
 

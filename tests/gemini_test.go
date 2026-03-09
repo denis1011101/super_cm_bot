@@ -1,18 +1,18 @@
 package tests
 
 import (
-    "os"
-    "testing"
-    "time"
-    "strings"
-    _ "unsafe"
-    _ "github.com/denis1011101/super_cm_bot/app"
-    tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-)
+	"database/sql"
+	"os"
+	"strings"
+	"testing"
+	"time"
+	_ "unsafe"
 
-// link to unexported/exported symbols in app package
-//go:linkname callLLM github.com/denis1011101/super_cm_bot/app.callLLM
-func callLLM(systemPrompt, userPrompt string) (string, error)
+	"github.com/denis1011101/super_cm_bot/app"
+	"github.com/denis1011101/super_cm_bot/tests/testutils"
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	_ "github.com/mattn/go-sqlite3"
+)
 
 //go:linkname parseTextFromGenericResponse github.com/denis1011101/super_cm_bot/app.parseTextFromGenericResponse
 func parseTextFromGenericResponse(b []byte) string
@@ -20,456 +20,313 @@ func parseTextFromGenericResponse(b []byte) string
 //go:linkname getPersonas github.com/denis1011101/super_cm_bot/app.getPersonas
 func getPersonas(userText string) (string, string)
 
-//go:linkname TryGeminiRespond github.com/denis1011101/super_cm_bot/app.TryGeminiRespond
-func TryGeminiRespond(update tgbotapi.Update, bot *tgbotapi.BotAPI, targetChatID int64) bool
+func setupGeminiDB(t *testing.T) *sql.DB {
+	t.Helper()
 
-// add linkname for immediate responder
-//go:linkname TryGeminiRespondImmediate github.com/denis1011101/super_cm_bot/app.TryGeminiRespondImmediate
-func TryGeminiRespondImmediate(m tgbotapi.Message, bot *tgbotapi.BotAPI) bool
+	_, teardown := testutils.SetupTestEnvironment(t, false)
+	t.Cleanup(teardown)
 
-//go:linkname respondWithGemini github.com/denis1011101/super_cm_bot/app.respondWithGemini
-func respondWithGemini(m tgbotapi.Message, bot *tgbotapi.BotAPI) error
+	db, err := app.InitDB()
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("Error closing database: %v", err)
+		}
+	})
 
-//go:linkname geminiLast github.com/denis1011101/super_cm_bot/app.geminiLast
-var geminiLast map[int64]time.Time
-
-//go:linkname appendChatMsg github.com/denis1011101/super_cm_bot/app.appendChatMsg
-func appendChatMsg(chatID int64, role, text string)
-
-//go:linkname buildContext github.com/denis1011101/super_cm_bot/app.buildContext
-func buildContext(chatID int64, limit int, ttl time.Duration) string
-
-func TestCallLLM_NoAPIKey(t *testing.T) {
-    orig := os.Getenv("GEMINI_API_KEY")
-    defer func() { _ = os.Setenv("GEMINI_API_KEY", orig) }()
-
-    _ = os.Unsetenv("GEMINI_API_KEY")
-    _, err := callLLM("sys", "hello")
-    if err == nil {
-        t.Fatalf("expected error when GEMINI_API_KEY is not set, got nil")
-    }
-    if err.Error() != "GEMINI_API_KEY is not set" {
-        t.Fatalf("unexpected error: %v", err)
-    }
+	return db
 }
 
 func TestParseTextFromGenericResponse_VariousFormats(t *testing.T) {
-    cases := []struct {
-        name string
-        in   string
-        want string
-    }{
-        {"text_field", `{"text":"hello"}`, "hello"},
-        {"choices_text", `{"choices":[{"text":"choice text"}]}`, "choice text"},
-        {"candidates_parts", `{"candidates":[{"content":{"parts":[{"text":"candidate text"}]}}]}`, "candidate text"},
-        {"candidates_output_string", `{"candidates":[{"output":"outstr"}]}`, "outstr"},
-        {"output_content_format", `{"output":[{"content":[{"text":"out content"}]}]}`, "out content"},
-    }
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"text_field", `{"text":"hello"}`, "hello"},
+		{"choices_text", `{"choices":[{"text":"choice text"}]}`, "choice text"},
+		{"candidates_parts", `{"candidates":[{"content":{"parts":[{"text":"candidate text"}]}}]}`, "candidate text"},
+		{"candidates_output_string", `{"candidates":[{"output":"outstr"}]}`, "outstr"},
+		{"output_content_format", `{"output":[{"content":[{"text":"out content"}]}]}`, "out content"},
+	}
 
-    for _, c := range cases {
-        t.Run(c.name, func(t *testing.T) {
-            got := parseTextFromGenericResponse([]byte(c.in))
-            if got != c.want {
-                t.Fatalf("got %q want %q", got, c.want)
-            }
-        })
-    }
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := parseTextFromGenericResponse([]byte(c.in))
+			if got != c.want {
+				t.Fatalf("got %q want %q", got, c.want)
+			}
+		})
+	}
 }
 
 func TestParseTextFromGenericResponse_ExtraAndFallbackCases(t *testing.T) {
-    cases := []struct {
-        name string
-        in   string
-        want string
-    }{
-        {"candidates_content_string", `{"candidates":[{"content":"just text"}]}`, "just text"},
-        {"trimmed_text_field", `{"text":"   padded   "}`, "padded"},
-        {"raw_fallback_for_unknown_shape", `{"foo":"bar"}`, `{"foo":"bar"}`},
-        {"invalid_json", `{bad json`, ""},
-    }
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"candidates_content_string", `{"candidates":[{"content":"just text"}]}`, "just text"},
+		{"trimmed_text_field", `{"text":"   padded   "}`, "padded"},
+		{"raw_fallback_for_unknown_shape", `{"foo":"bar"}`, `{"foo":"bar"}`},
+		{"invalid_json", `{bad json`, ""},
+	}
 
-    for _, c := range cases {
-        t.Run(c.name, func(t *testing.T) {
-            got := parseTextFromGenericResponse([]byte(c.in))
-            if got != c.want {
-                t.Fatalf("got %q want %q", got, c.want)
-            }
-        })
-    }
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := parseTextFromGenericResponse([]byte(c.in))
+			if got != c.want {
+				t.Fatalf("got %q want %q", got, c.want)
+			}
+		})
+	}
 }
 
-func TestGetPersonas_NonEmptyAndSafety(t *testing.T) {
-    sys, user := getPersonas("Привет")
-    if sys == "" {
-        t.Fatalf("system instruction should not be empty")
-    }
-    if user != "Привет" {
-        t.Fatalf("user text should be preserved, got %q", user)
-    }
-    if !containsIgnoreCase(sys, "SAFETY") && !containsIgnoreCase(sys, "safety") {
-        t.Fatalf("system instruction should include SAFETY rules, got: %q", sys)
-    }
-    if !containsIgnoreCase(sys, "Persona") {
-        t.Fatalf("system instruction should include Persona description, got: %q", sys)
-    }
+func TestGetPersonas_FlirtyOnly(t *testing.T) {
+	sys, user := getPersonas("Привет")
+	if sys == "" {
+		t.Fatalf("system instruction should not be empty")
+	}
+	if user != "Привет" {
+		t.Fatalf("user text should be preserved, got %q", user)
+	}
+	if !strings.Contains(sys, "slightly flirty") {
+		t.Fatalf("expected flirty persona, got: %q", sys)
+	}
+	for _, forbidden := range []string{"cocky bandit", "bad boy/girl", "straight to the point"} {
+		if strings.Contains(sys, forbidden) {
+			t.Fatalf("unexpected legacy persona %q in prompt: %q", forbidden, sys)
+		}
+	}
+	if !strings.Contains(sys, "SAFETY") {
+		t.Fatalf("system instruction should include SAFETY rules, got: %q", sys)
+	}
 }
 
-func TestTryGeminiRespond_SetsRandomCooldown(t *testing.T) {
-    // ensure map is clean
-    geminiLast = make(map[int64]time.Time)
+func TestGeminiAgentTryRespond_SetsRandomCooldown(t *testing.T) {
+	db := setupGeminiDB(t)
+	agent := app.NewGeminiAgent(db, nil)
 
-    chatID := int64(99999)
-    now := time.Now()
+	chatID := int64(99999)
+	now := time.Now()
 
-    upd := tgbotapi.Update{
-        Message: &tgbotapi.Message{
-            Chat: &tgbotapi.Chat{ID: chatID},
-            From: &tgbotapi.User{IsBot: false},
-            Text: "hello",
-            Date: int(now.Unix()),
-        },
-    }
+	upd := tgbotapi.Update{
+		Message: &tgbotapi.Message{
+			Chat: &tgbotapi.Chat{ID: chatID},
+			From: &tgbotapi.User{IsBot: false},
+			Text: "hello",
+			Date: int(now.Unix()),
+		},
+	}
 
-    ok := TryGeminiRespond(upd, nil, chatID)
-    if !ok {
-        t.Fatalf("TryGeminiRespond should have started processing")
-    }
-
-    next, ok := geminiLast[chatID]
-    if !ok {
-        t.Fatalf("geminiLast not set for chat")
-    }
-
-    dur := next.Sub(now)
-    if dur < 30*time.Minute {
-        t.Fatalf("cooldown too short: %v", dur)
-    }
-    // allow small margin for scheduling/timing
-    if dur > 61*time.Minute {
-        t.Fatalf("cooldown too long: %v", dur)
-    }
+	ok := agent.TryRespond(upd, chatID)
+	if !ok {
+		t.Fatalf("TryRespond should have started processing")
+	}
+	if agent.TryRespond(upd, chatID) {
+		t.Fatalf("expected second TryRespond call to be blocked by cooldown")
+	}
 }
 
-func TestTryGeminiRespond_GuardChecks(t *testing.T) {
-    geminiLast = make(map[int64]time.Time)
-    chatID := int64(777)
-    oldDate := int(time.Now().Add(-10 * time.Minute).Unix())
+func TestGeminiAgentTryRespond_GuardChecks(t *testing.T) {
+	db := setupGeminiDB(t)
+	agent := app.NewGeminiAgent(db, &tgbotapi.BotAPI{
+		Self: tgbotapi.User{UserName: "my_bot"},
+	})
+	chatID := int64(777)
+	oldDate := int(time.Now().Add(-10 * time.Minute).Unix())
 
-    botWithUsername := &tgbotapi.BotAPI{
-        Self: tgbotapi.User{UserName: "my_bot"},
-    }
+	cases := []struct {
+		name       string
+		update     tgbotapi.Update
+		targetChat int64
+		want       bool
+	}{
+		{"nil_message", tgbotapi.Update{}, chatID, false},
+		{
+			"wrong_chat",
+			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID + 1}, From: &tgbotapi.User{}, Text: "hello", Date: oldDate}},
+			chatID,
+			false,
+		},
+		{
+			"from_bot",
+			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: true}, Text: "hello", Date: oldDate}},
+			chatID,
+			false,
+		},
+		{
+			"empty_text",
+			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "   ", Date: oldDate}},
+			chatID,
+			false,
+		},
+		{
+			"command",
+			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "/help", Date: oldDate}},
+			chatID,
+			false,
+		},
+		{
+			"mention_other_user",
+			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "@someone hello", Date: oldDate}},
+			chatID,
+			false,
+		},
+		{
+			"mention_own_bot",
+			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "@my_bot hi", Date: oldDate}},
+			chatID,
+			true,
+		},
+	}
 
-    cases := []struct {
-        name       string
-        update     tgbotapi.Update
-        bot        *tgbotapi.BotAPI
-        targetChat int64
-        want       bool
-    }{
-        {"nil_message", tgbotapi.Update{}, nil, chatID, false},
-        {
-            "wrong_chat",
-            tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID + 1}, From: &tgbotapi.User{}, Text: "hello", Date: oldDate}},
-            nil,
-            chatID,
-            false,
-        },
-        {
-            "from_bot",
-            tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: true}, Text: "hello", Date: oldDate}},
-            nil,
-            chatID,
-            false,
-        },
-        {
-            "empty_text",
-            tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "   ", Date: oldDate}},
-            nil,
-            chatID,
-            false,
-        },
-        {
-            "command",
-            tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "/help", Date: oldDate}},
-            nil,
-            chatID,
-            false,
-        },
-        {
-            "mention_other_user",
-            tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "@someone hello", Date: oldDate}},
-            botWithUsername,
-            chatID,
-            false,
-        },
-        {
-            "mention_without_bot_instance",
-            tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "@my_bot hi", Date: oldDate}},
-            nil,
-            chatID,
-            false,
-        },
-        {
-            "mention_own_bot",
-            tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "@my_bot hi", Date: oldDate}},
-            botWithUsername,
-            chatID,
-            true,
-        },
-    }
-
-    for _, c := range cases {
-        t.Run(c.name, func(t *testing.T) {
-            got := TryGeminiRespond(c.update, c.bot, c.targetChat)
-            if got != c.want {
-                t.Fatalf("case %s: got %v want %v", c.name, got, c.want)
-            }
-        })
-    }
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := agent.TryRespond(c.update, c.targetChat)
+			if got != c.want {
+				t.Fatalf("case %s: got %v want %v", c.name, got, c.want)
+			}
+		})
+	}
 }
 
-func TestTryGeminiRespond_RespectsExistingCooldown(t *testing.T) {
-    geminiLast = make(map[int64]time.Time)
-    chatID := int64(5566)
-    next := time.Now().Add(15 * time.Minute)
-    geminiLast[chatID] = next
+func TestGeminiAgentTryRespondImmediate_BasicChecks(t *testing.T) {
+	db := setupGeminiDB(t)
+	agent := app.NewGeminiAgent(db, nil)
+	orig := os.Getenv("GEMINI_API_KEY")
+	defer func() { _ = os.Setenv("GEMINI_API_KEY", orig) }()
+	_ = os.Unsetenv("GEMINI_API_KEY")
 
-    upd := tgbotapi.Update{
-        Message: &tgbotapi.Message{
-            Chat: &tgbotapi.Chat{ID: chatID},
-            From: &tgbotapi.User{IsBot: false},
-            Text: "hello",
-            Date: int(time.Now().Unix()),
-        },
-    }
+	now := time.Now()
 
-    if got := TryGeminiRespond(upd, nil, chatID); got {
-        t.Fatalf("expected false when chat is in cooldown")
-    }
+	cases := []struct {
+		name string
+		msg  tgbotapi.Message
+		want bool
+	}{
+		{"from_bot", tgbotapi.Message{From: &tgbotapi.User{IsBot: true}, Text: "hi", Date: int(now.Unix())}, false},
+		{"empty_text", tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "   ", Date: int(now.Unix())}, false},
+		{"command", tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "/start", Date: int(now.Unix())}, false},
+		{"old_message", tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "hey", Date: int(now.Add(-10 * time.Minute).Unix())}, false},
+		{"valid", tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 42}, From: &tgbotapi.User{IsBot: false}, Text: "hello", Date: int(now.Unix())}, true},
+	}
 
-    if got := geminiLast[chatID]; !got.Equal(next) {
-        t.Fatalf("cooldown timestamp should not change: got %v want %v", got, next)
-    }
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := agent.TryRespondImmediate(c.msg)
+			if got != c.want {
+				t.Fatalf("case %s: got %v want %v", c.name, got, c.want)
+			}
+		})
+	}
 }
 
-func TestRespondWithGemini_IgnoresOldMessages(t *testing.T) {
-    // message older than allowed threshold (current code ignores >5m)
-    old := time.Now().Add(-10 * time.Minute)
-    msg := tgbotapi.Message{
-        Chat: &tgbotapi.Chat{ID: 123},
-        From: &tgbotapi.User{IsBot: false},
-        Text: "old message",
-        Date: int(old.Unix()),
-    }
+func TestSaveAndLoadGeminiMemoryContext(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(111)
+	now := time.Now()
 
-    // bot can be nil because old message returns early
-    if err := respondWithGemini(msg, nil); err != nil {
-        t.Fatalf("respondWithGemini should return nil for old messages, got: %v", err)
-    }
+	if err := app.SaveGeminiMemory(db, chatID, "user", "first", now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("save first memory: %v", err)
+	}
+	if err := app.SaveGeminiMemory(db, chatID, "assistant", "second", now.Add(-time.Hour)); err != nil {
+		t.Fatalf("save second memory: %v", err)
+	}
+	if err := app.SaveGeminiMemory(db, chatID+1, "user", "other chat", now); err != nil {
+		t.Fatalf("save other chat memory: %v", err)
+	}
+
+	got, err := app.LoadGeminiMemoryContext(db, chatID, 10, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("load memory context: %v", err)
+	}
+
+	want := "user: first\nassistant: second"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
 }
 
-func TestRespondWithGemini_Validation(t *testing.T) {
-    err := respondWithGemini(tgbotapi.Message{Text: "hello"}, nil)
-    if err == nil {
-        t.Fatalf("expected error when message.Chat is nil")
-    }
+func TestLoadGeminiMemoryContext_RespectsLimitAndSince(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(222)
+	now := time.Now()
 
-    msg := tgbotapi.Message{
-        Chat: &tgbotapi.Chat{ID: 101},
-        Text: "   ",
-        Date: int(time.Now().Unix()),
-    }
-    if err := respondWithGemini(msg, nil); err != nil {
-        t.Fatalf("expected nil for empty user text, got %v", err)
-    }
+	if err := app.SaveGeminiMemory(db, chatID, "user", "expired", now.Add(-48*time.Hour)); err != nil {
+		t.Fatalf("save expired memory: %v", err)
+	}
+	if err := app.SaveGeminiMemory(db, chatID, "assistant", "keep-1", now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("save keep-1 memory: %v", err)
+	}
+	if err := app.SaveGeminiMemory(db, chatID, "user", "keep-2", now.Add(-time.Hour)); err != nil {
+		t.Fatalf("save keep-2 memory: %v", err)
+	}
+
+	got, err := app.LoadGeminiMemoryContext(db, chatID, 2, now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("load limited memory context: %v", err)
+	}
+
+	want := "assistant: keep-1\nuser: keep-2"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
 }
 
-// helper: case-insensitive substring check
-func containsIgnoreCase(s, sub string) bool {
-    return len(s) >= len(sub) && (len(sub) == 0 || (stringIndexFold(s, sub) >= 0))
+func TestDeleteAllGeminiMemories(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	if err := app.SaveGeminiMemory(db, 1, "user", "hello", time.Now()); err != nil {
+		t.Fatalf("save memory: %v", err)
+	}
+	if err := app.DeleteAllGeminiMemories(db); err != nil {
+		t.Fatalf("delete memories: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM gemini_memories").Scan(&count); err != nil {
+		t.Fatalf("count memories: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 memories after cleanup, got %d", count)
+	}
 }
 
-// small portable case-insensitive index (avoids importing strings twice in tests)
-func stringIndexFold(s, sep string) int {
-    // quick path
-    lo := lower(s)
-    lsep := lower(sep)
-    return index(lo, lsep)
+func TestNextGeminiMemoryCleanupAt(t *testing.T) {
+	loc := time.FixedZone("UTC+5", 5*60*60)
+
+	morning := time.Date(2026, time.March, 9, 1, 0, 0, 0, loc)
+	gotMorning := app.NextGeminiMemoryCleanupAt(morning)
+	wantMorning := time.Date(2026, time.March, 9, 3, 0, 0, 0, loc)
+	if !gotMorning.Equal(wantMorning) {
+		t.Fatalf("morning cleanup time: got %v want %v", gotMorning, wantMorning)
+	}
+
+	afterNight := time.Date(2026, time.March, 9, 4, 0, 0, 0, loc)
+	gotAfterNight := app.NextGeminiMemoryCleanupAt(afterNight)
+	wantAfterNight := time.Date(2026, time.March, 10, 3, 0, 0, 0, loc)
+	if !gotAfterNight.Equal(wantAfterNight) {
+		t.Fatalf("after night cleanup time: got %v want %v", gotAfterNight, wantAfterNight)
+	}
 }
 
-func lower(s string) string {
-    b := []byte(s)
-    for i := range b {
-        c := b[i]
-        if 'A' <= c && c <= 'Z' {
-            b[i] = c + 32
-        }
-    }
-    return string(b)
-}
+func TestGoogleSearchAdapter(t *testing.T) {
+	adapter := app.GeminiGoogleSearchAdapter{}
+	if !adapter.ShouldSearch("кто сейчас президент?") {
+		t.Fatalf("expected search for explicit search-like prompt")
+	}
+	if adapter.ShouldSearch("лол") {
+		t.Fatalf("did not expect search for casual short prompt")
+	}
 
-func index(s, sep string) int {
-    n := len(sep)
-    if n == 0 {
-        return 0
-    }
-    for i := 0; i+n <= len(s); i++ {
-        if s[i:i+n] == sep {
-            return i
-        }
-    }
-    return -1
-}
-
-// test for immediate responder
-func TestTryGeminiRespondImmediate_BasicChecks(t *testing.T) {
-    orig := os.Getenv("GEMINI_API_KEY")
-    defer func() { _ = os.Setenv("GEMINI_API_KEY", orig) }()
-
-    // ensure no API key so goroutine won't try to call external API
-    _ = os.Unsetenv("GEMINI_API_KEY")
-
-    now := time.Now()
-
-    cases := []struct {
-        name string
-        msg  tgbotapi.Message
-        want bool
-    }{
-        {
-            "from_bot",
-            tgbotapi.Message{From: &tgbotapi.User{IsBot: true}, Text: "hi", Date: int(now.Unix())},
-            false,
-        },
-        {
-            "empty_text",
-            tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "   ", Date: int(now.Unix())},
-            false,
-        },
-        {
-            "command",
-            tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "/start", Date: int(now.Unix())},
-            false,
-        },
-        {
-            "old_message",
-            tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "hey", Date: int(now.Add(-10 * time.Minute).Unix())},
-            false,
-        },
-        {
-            "valid",
-            tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "hello", Date: int(now.Unix())},
-            true,
-        },
-    }
-
-    for _, c := range cases {
-        t.Run(c.name, func(t *testing.T) {
-            got := TryGeminiRespondImmediate(c.msg, nil)
-            if got != c.want {
-                t.Fatalf("case %s: got %v want %v", c.name, got, c.want)
-            }
-        })
-    }
-}
-
-func TestTryGeminiRespondImmediate_DoesNotAffectGeminiLast(t *testing.T) {
-    // prepare geminiLast with a value
-    geminiLast = make(map[int64]time.Time)
-    chatID := int64(4242)
-    prev := time.Now().Add(1 * time.Hour)
-    geminiLast[chatID] = prev
-
-    msg := tgbotapi.Message{
-        Chat: &tgbotapi.Chat{ID: chatID},
-        From: &tgbotapi.User{IsBot: false},
-        Text: "hello",
-        Date: int(time.Now().Unix()),
-    }
-
-    _ = TryGeminiRespondImmediate(msg, nil)
-
-    if got, ok := geminiLast[chatID]; !ok {
-        t.Fatalf("geminiLast entry removed unexpectedly")
-    } else if !got.Equal(prev) {
-        t.Fatalf("geminiLast changed by immediate responder: got %v want %v", got, prev)
-    }
-}
-
-// Новогодний тест: в праздничный период ожидаем появление HOLIDAY-инструкций (в ~2/3 случаев),
-// вариантов с BEGINNING и END, и указание эмодзи.
-func TestGetPersonas_HolidayBehavior(t *testing.T) {
-    now := time.Now()
-    isHoliday := (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2)
-    if !isHoliday {
-        t.Skip("not holiday period; skipping holiday-specific test")
-    }
-
-    runs := 120
-    foundHoliday := 0
-    foundBegin := 0
-    foundEnd := 0
-    emojis := []string{"🎄", "🎉", "🥂", "🎆", "✨"}
-
-    for i := 0; i < runs; i++ {
-        sys, _ := getPersonas("hello")
-        if strings.Contains(sys, "HOLIDAY") {
-            foundHoliday++
-            if strings.Contains(sys, "BEGINNING") {
-                foundBegin++
-            }
-            if strings.Contains(sys, "END") {
-                foundEnd++
-            }
-            hasEmoji := false
-            for _, e := range emojis {
-                if strings.Contains(sys, e) {
-                    hasEmoji = true
-                    break
-                }
-            }
-            if !hasEmoji {
-                t.Fatalf("holiday instruction without emojis: %q", sys)
-            }
-        }
-    }
-
-    if foundHoliday == 0 {
-        t.Fatalf("no HOLIDAY instruction observed in %d runs", runs)
-    }
-    if foundBegin == 0 || foundEnd == 0 {
-        t.Fatalf("expected both BEGINNING and END variants, got begin=%d end=%d", foundBegin, foundEnd)
-    }
-}
-
-func TestBuildContext_LimitAndTTL(t *testing.T) {
-    chatID := time.Now().UnixNano()
-
-    appendChatMsg(chatID, "user", "first")
-    appendChatMsg(chatID, "assistant", "second")
-    appendChatMsg(chatID, "user", "third")
-
-    got := buildContext(chatID, 2, time.Hour)
-    want := "assistant: second\nuser: third"
-    if got != want {
-        t.Fatalf("unexpected context with limit=2: got %q want %q", got, want)
-    }
-
-    appendChatMsg(chatID, "user", "ttl-check")
-    time.Sleep(3 * time.Millisecond)
-    got = buildContext(chatID, 10, time.Millisecond)
-    if got != "" {
-        t.Fatalf("expected empty context after ttl expiration, got %q", got)
-    }
-}
-
-func TestAppendChatMsg_IgnoresEmptyText(t *testing.T) {
-    chatID := time.Now().UnixNano() + 1
-    appendChatMsg(chatID, "user", "")
-    appendChatMsg(chatID, "user", "   ")
-
-    got := buildContext(chatID, 10, time.Hour)
-    if got != "user:    " {
-        t.Fatalf("expected whitespace text to be stored as-is and empty text to be ignored, got %q", got)
-    }
+	tools := adapter.BuildTools()
+	if len(tools) != 1 {
+		t.Fatalf("expected 1 tool, got %d", len(tools))
+	}
+	if tools[0].GoogleSearch == nil {
+		t.Fatalf("expected google_search tool to be set (Gemini 2.x format)")
+	}
 }

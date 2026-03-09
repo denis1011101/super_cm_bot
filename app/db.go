@@ -2,11 +2,13 @@ package app
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -550,4 +552,124 @@ func UserExists(db *sql.DB, userID int64, chatID int64) (bool, error) {
 		return false, err
 	}
 	return exists, nil
+}
+
+func SaveGeminiMemory(db *sql.DB, chatID int64, role, content string, createdAt time.Time) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+
+	_, err := db.Exec(
+		"INSERT INTO gemini_memories (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+		chatID, role, content, createdAt.UTC().Format(sqliteTimestampLayout),
+	)
+	return err
+}
+
+func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Time) (string, error) {
+	if db == nil {
+		return "", errors.New("db is nil")
+	}
+	if limit <= 0 {
+		return "", nil
+	}
+
+	rows, err := db.Query(
+		`SELECT role, content
+		FROM gemini_memories
+		WHERE chat_id = ? AND created_at >= ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT ?`,
+		chatID, since.UTC().Format(sqliteTimestampLayout), limit,
+	)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing gemini memory rows: %v", closeErr)
+		}
+	}()
+
+	type memoryRow struct {
+		role    string
+		content string
+	}
+
+	memories := make([]memoryRow, 0, limit)
+	for rows.Next() {
+		var row memoryRow
+		if err := rows.Scan(&row.role, &row.content); err != nil {
+			return "", err
+		}
+		memories = append(memories, row)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	if len(memories) == 0 {
+		return "", nil
+	}
+
+	var b strings.Builder
+	for i := len(memories) - 1; i >= 0; i-- {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(memories[i].role)
+		b.WriteString(": ")
+		b.WriteString(memories[i].content)
+	}
+	return b.String(), nil
+}
+
+func DeleteAllGeminiMemories(db *sql.DB) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	_, err := db.Exec("DELETE FROM gemini_memories")
+	return err
+}
+
+func DeleteOldGeminiMemories(db *sql.DB, olderThan time.Time) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	_, err := db.Exec("DELETE FROM gemini_memories WHERE created_at < ?", olderThan.UTC().Format(sqliteTimestampLayout))
+	return err
+}
+
+func NextGeminiMemoryCleanupAt(now time.Time) time.Time {
+	next := time.Date(now.Year(), now.Month(), now.Day(), 3, 0, 0, 0, now.Location())
+	if !next.After(now) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
+}
+
+func StartGeminiMemoryCleanupRoutine(db *sql.DB, nowFn func() time.Time) {
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+
+	go func() {
+		for {
+			now := nowFn()
+			next := NextGeminiMemoryCleanupAt(now)
+			timer := time.NewTimer(time.Until(next))
+			<-timer.C
+			timer.Stop()
+
+			cutoff := nowFn().Add(-geminiMemoryWindow)
+			if err := DeleteOldGeminiMemories(db, cutoff); err != nil {
+				log.Printf("Gemini memories cleanup failed: %v", err)
+			} else {
+				log.Printf("Gemini memories cleanup completed at %s", next.Format(time.RFC3339))
+			}
+		}
+	}()
 }

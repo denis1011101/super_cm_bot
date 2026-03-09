@@ -19,6 +19,21 @@ var migrations = []Migration{
 		Name: "add_is_active_column",
 		SQL:  "ALTER TABLE pens ADD COLUMN is_active BOOLEAN DEFAULT TRUE",
 	},
+	{
+		ID:   2,
+		Name: "create_gemini_memories_table",
+		SQL: `
+		CREATE TABLE IF NOT EXISTS gemini_memories (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			chat_id INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_gemini_memories_chat_created_at
+			ON gemini_memories(chat_id, created_at);
+		`,
+	},
 }
 
 // RunMigrations выполняет миграции, которые еще не были применены

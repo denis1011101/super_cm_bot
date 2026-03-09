@@ -31,8 +31,8 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 
 	// Подготовка запроса для вставки пользователя в базу данных
 	stmt, err := db.Prepare(`
-		INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count)
-		VALUES (?, ?, ?, ?, 0, 0)
+		INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count, pen_last_update_at)
+		VALUES (?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP)
 	`)
 	if err != nil {
 		log.Printf("Error preparing insert statement: %v", err)

@@ -5,9 +5,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
-	"sync"
 	"strings"
+	"sync"
 
 	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/app/handlers"
@@ -16,6 +17,9 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
+
+// klewoRe матчит паттерн "@юзер клево/клёво" с необязательными знаками препинания в конце
+var klewoRe = regexp.MustCompile(`@\S+\s+кл[её]во[!?]?`)
 
 // main создаёт бота и слушает обновления
 func main() {
@@ -123,6 +127,11 @@ func main() {
 	// Запуск ежедневных команд в случайное время
 	app.StartDailyCommandsRoutine(db, bot, specificChatID, handlers.ChooseGiga, handlers.ChooseUnhandsome)
 
+	// Ночная очистка памяти Gemini
+	app.StartGeminiMemoryCleanupRoutine(db, nil)
+
+	geminiAgent := app.NewGeminiAgent(db, bot)
+
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
 		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,
@@ -141,39 +150,44 @@ func main() {
 		"/topunh":                             handlers.TopUnhandsome,
 	}
 
-    // Обработка обновлений
-    for update := range updates {
-        if update.Message != nil {
-            chatID := update.Message.Chat.ID
-            if chatID == specificChatID {
-                // Обработка команд
-                if handler, exists := commandHandlers[update.Message.Text]; exists {
-                    handler(update, bot, db)
-                } else { // Обработка обычных сообщений
-                    handlers.HandlePenCommand(update, bot, db)
-                }
+	// Обработка обновлений
+	for update := range updates {
+		if update.Message != nil {
+			chatID := update.Message.Chat.ID
+			if chatID == specificChatID {
+				// Обработка команд
+				if handler, exists := commandHandlers[update.Message.Text]; exists {
+					handler(update, bot, db)
+				} else { // Обработка обычных сообщений
+					handlers.HandlePenCommand(update, bot, db)
+				}
 
-                // сначала: если нас тегают или отвечают на наше сообщение -> immediate Gemini
-                isMention := false
-                if update.Message.Text != "" && bot != nil && bot.Self.UserName != "" {
-                    isMention = strings.Contains(update.Message.Text, "@"+bot.Self.UserName)
-                }
-                isReplyToBot := update.Message.ReplyToMessage != nil &&
-                    update.Message.ReplyToMessage.From != nil &&
-                    bot != nil &&
-                    update.Message.ReplyToMessage.From.ID == bot.Self.ID
+				// эхо: @юзер клево/клёво ? — повторить сообщение
+				if klewoRe.MatchString(strings.ToLower(update.Message.Text)) {
+					echo := tgbotapi.NewMessage(chatID, update.Message.Text)
+					echo.ReplyToMessageID = update.Message.MessageID
+					_, _ = bot.Send(echo)
+				} else {
+					// если нас тегают или отвечают на наше сообщение -> immediate Gemini
+					isMention := false
+					if update.Message.Text != "" && bot != nil && bot.Self.UserName != "" {
+						isMention = strings.Contains(update.Message.Text, "@"+bot.Self.UserName)
+					}
+					isReplyToBot := update.Message.ReplyToMessage != nil &&
+						update.Message.ReplyToMessage.From != nil &&
+						bot != nil &&
+						update.Message.ReplyToMessage.From.ID == bot.Self.ID
 
-                if isMention || isReplyToBot {
-                    // вызов немедленного ответа (без основного cooldown)
-                    _ = app.TryGeminiRespondImmediate(*update.Message, bot)
-                } else {
-                    // обычная логика по таймеру/слоту
-                    _ = app.TryGeminiRespond(update, bot, specificChatID)
-                }
+					if isMention || isReplyToBot {
+						_ = geminiAgent.TryRespondImmediate(*update.Message)
+					} else {
+						_ = geminiAgent.TryRespond(update, specificChatID)
+					}
+				}
 
-            } else if update.MyChatMember != nil { // Обработка добавления бота в чат
-                handlers.HandleBotAddition(update, bot)
-            }
-        }
-    }
+			} else if update.MyChatMember != nil { // Обработка добавления бота в чат
+				handlers.HandleBotAddition(update, bot)
+			}
+		}
+	}
 }
