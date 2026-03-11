@@ -131,6 +131,18 @@ func main() {
 	app.StartGeminiMemoryCleanupRoutine(db, nil)
 
 	geminiAgent := app.NewGeminiAgent(db, bot)
+	geminiAgent.SetAutoCommandHandler(func(source tgbotapi.Message, cmd string) {
+		synthetic := source
+		synthetic.Text = cmd
+		update := tgbotapi.Update{Message: &synthetic}
+
+		switch cmd {
+		case "/giga":
+			handlers.ChooseGiga(update, bot, db)
+		case "/unh":
+			handlers.ChooseUnhandsome(update, bot, db)
+		}
+	})
 
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
@@ -165,7 +177,6 @@ func main() {
 				// эхо: @юзер клево/клёво ? — повторить сообщение
 				if klewoRe.MatchString(strings.ToLower(update.Message.Text)) {
 					echo := tgbotapi.NewMessage(chatID, update.Message.Text)
-					echo.ReplyToMessageID = update.Message.MessageID
 					_, _ = bot.Send(echo)
 				} else {
 					// если нас тегают или отвечают на наше сообщение -> immediate Gemini

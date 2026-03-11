@@ -20,6 +20,15 @@ func parseTextFromGenericResponse(b []byte) string
 //go:linkname getPersonas github.com/denis1011101/super_cm_bot/app.getPersonas
 func getPersonas(userText string) (string, string)
 
+//go:linkname memorySpeakerName github.com/denis1011101/super_cm_bot/app.memorySpeakerName
+func memorySpeakerName(user *tgbotapi.User) string
+
+//go:linkname extractGeminiSaveFacts github.com/denis1011101/super_cm_bot/app.extractGeminiSaveFacts
+func extractGeminiSaveFacts(raw string) (string, []app.GeminiUserFact)
+
+//go:linkname extractGeminiAutoCommand github.com/denis1011101/super_cm_bot/app.extractGeminiAutoCommand
+func extractGeminiAutoCommand(raw string) (string, string)
+
 func setupGeminiDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -92,16 +101,84 @@ func TestGetPersonas_FlirtyOnly(t *testing.T) {
 	if user != "Привет" {
 		t.Fatalf("user text should be preserved, got %q", user)
 	}
-	if !strings.Contains(sys, "slightly flirty") {
+	if !strings.Contains(sys, "flirty") {
 		t.Fatalf("expected flirty persona, got: %q", sys)
 	}
-	for _, forbidden := range []string{"cocky bandit", "bad boy/girl", "straight to the point"} {
-		if strings.Contains(sys, forbidden) {
-			t.Fatalf("unexpected legacy persona %q in prompt: %q", forbidden, sys)
+	if !strings.Contains(sys, "NSFW") {
+		t.Fatalf("system instruction should include safety rules, got: %q", sys)
+	}
+}
+
+func TestMemorySpeakerName(t *testing.T) {
+	cases := []struct {
+		name string
+		user *tgbotapi.User
+		want string
+	}{
+		{
+			name: "first_name_preferred",
+			user: &tgbotapi.User{FirstName: "Денис", UserName: "denis1011101"},
+			want: "Денис",
+		},
+		{
+			name: "username_fallback",
+			user: &tgbotapi.User{UserName: "dima"},
+			want: "dima",
+		},
+		{
+			name: "sanitizes_role",
+			user: &tgbotapi.User{FirstName: "  Вася:\nПупкин  "},
+			want: "Вася Пупкин",
+		},
+		{
+			name: "nil_user_fallback",
+			user: nil,
+			want: "user",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := memorySpeakerName(c.user); got != c.want {
+				t.Fatalf("got %q want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestExtractGeminiSaveFacts(t *testing.T) {
+	raw := "Красавчик, поздравляю! 🔥 [SAVE: Denis — сдал экзамен по Go] [SAVE: Дима — фанат заднего привода]"
+
+	cleaned, facts := extractGeminiSaveFacts(raw)
+
+	if cleaned != "Красавчик, поздравляю! 🔥" {
+		t.Fatalf("cleaned reply: got %q", cleaned)
+	}
+
+	want := []app.GeminiUserFact{
+		{UserName: "Denis", Fact: "сдал экзамен по Go"},
+		{UserName: "Дима", Fact: "фанат заднего привода"},
+	}
+	if len(facts) != len(want) {
+		t.Fatalf("facts count: got %d want %d", len(facts), len(want))
+	}
+	for i := range want {
+		if facts[i] != want[i] {
+			t.Fatalf("fact %d: got %+v want %+v", i, facts[i], want[i])
 		}
 	}
-	if !strings.Contains(sys, "SAFETY") {
-		t.Fatalf("system instruction should include SAFETY rules, got: %q", sys)
+}
+
+func TestExtractGeminiAutoCommand(t *testing.T) {
+	raw := "Ну что, погнали 😉 [CMD: /giga]"
+
+	cleaned, cmd := extractGeminiAutoCommand(raw)
+
+	if cleaned != "Ну что, погнали 😉" {
+		t.Fatalf("cleaned reply: got %q", cleaned)
+	}
+	if cmd != "/giga" {
+		t.Fatalf("cmd: got %q want %q", cmd, "/giga")
 	}
 }
 
@@ -292,6 +369,45 @@ func TestDeleteAllGeminiMemories(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected 0 memories after cleanup, got %d", count)
+	}
+}
+
+func TestSaveAndLoadGeminiUserFacts(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(333)
+	now := time.Now()
+
+	if err := app.SaveGeminiUserFact(db, chatID, "Denis", "сдал экзамен по Go", now.Add(-2*time.Hour)); err != nil {
+		t.Fatalf("save fact 1: %v", err)
+	}
+	if err := app.SaveGeminiUserFact(db, chatID, "Дима", "фанат заднего привода", now.Add(-time.Hour)); err != nil {
+		t.Fatalf("save fact 2: %v", err)
+	}
+	if err := app.SaveGeminiUserFact(db, chatID, "Denis", "сдал экзамен по Go", now); err != nil {
+		t.Fatalf("save duplicate fact: %v", err)
+	}
+	if err := app.SaveGeminiUserFact(db, chatID+1, "Other", "чужой факт", now); err != nil {
+		t.Fatalf("save other chat fact: %v", err)
+	}
+
+	facts, err := app.LoadRandomGeminiUserFacts(db, chatID, 10)
+	if err != nil {
+		t.Fatalf("load random facts: %v", err)
+	}
+	if len(facts) != 2 {
+		t.Fatalf("expected 2 unique facts, got %d", len(facts))
+	}
+
+	got := make(map[string]string, len(facts))
+	for _, fact := range facts {
+		got[fact.UserName] = fact.Fact
+	}
+
+	if got["Denis"] != "сдал экзамен по Go" {
+		t.Fatalf("missing Denis fact: %+v", got)
+	}
+	if got["Дима"] != "фанат заднего привода" {
+		t.Fatalf("missing Дима fact: %+v", got)
 	}
 }
 

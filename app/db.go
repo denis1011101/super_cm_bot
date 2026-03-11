@@ -570,6 +570,85 @@ func SaveGeminiMemory(db *sql.DB, chatID int64, role, content string, createdAt 
 	return err
 }
 
+func normalizeMemoryRole(value, fallback string) string {
+	replacer := strings.NewReplacer("\r", " ", "\n", " ", ":", " ")
+	cleaned := strings.TrimSpace(replacer.Replace(value))
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if cleaned == "" {
+		return fallback
+	}
+	return cleaned
+}
+
+func normalizeGeminiFactText(value string) string {
+	replacer := strings.NewReplacer("\r", " ", "\n", " ")
+	cleaned := strings.TrimSpace(replacer.Replace(value))
+	return strings.Join(strings.Fields(cleaned), " ")
+}
+
+type GeminiUserFact struct {
+	UserName string
+	Fact     string
+}
+
+func SaveGeminiUserFact(db *sql.DB, chatID int64, userName, fact string, createdAt time.Time) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	userName = normalizeMemoryRole(userName, "")
+	fact = normalizeGeminiFactText(fact)
+	if userName == "" || fact == "" {
+		return nil
+	}
+
+	_, err := db.Exec(
+		`INSERT OR IGNORE INTO gemini_user_facts (chat_id, user_name, fact, created_at)
+		VALUES (?, ?, ?, ?)`,
+		chatID, userName, fact, createdAt.UTC().Format(sqliteTimestampLayout),
+	)
+	return err
+}
+
+func LoadRandomGeminiUserFacts(db *sql.DB, chatID int64, limit int) ([]GeminiUserFact, error) {
+	if db == nil {
+		return nil, errors.New("db is nil")
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	rows, err := db.Query(
+		`SELECT user_name, fact
+		FROM gemini_user_facts
+		WHERE chat_id = ?
+		ORDER BY RANDOM()
+		LIMIT ?`,
+		chatID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing gemini user facts rows: %v", closeErr)
+		}
+	}()
+
+	facts := make([]GeminiUserFact, 0, limit)
+	for rows.Next() {
+		var fact GeminiUserFact
+		if err := rows.Scan(&fact.UserName, &fact.Fact); err != nil {
+			return nil, err
+		}
+		facts = append(facts, fact)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return facts, nil
+}
+
 func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Time) (string, error) {
 	if db == nil {
 		return "", errors.New("db is nil")

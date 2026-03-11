@@ -3,10 +3,13 @@ package tests
 import (
 	"bytes"
 	"database/sql"
+	"io"
 	"log"
 	"net/http"
-	"net/http/httptest"
 	"os"
+	"regexp"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +19,12 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
 
 func TestMain(m *testing.M) {
 	// Установка фиктивного токена
@@ -30,6 +39,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestBotE2E(t *testing.T) {
+	klewoRe := regexp.MustCompile(`@\S+\s+кл[её]во[!?]?`)
+
 	// Настройка тестовой среды
 	_, restoreFunc := testutils.SetupTestEnvironment(t, false)
 	defer restoreFunc()
@@ -68,18 +79,45 @@ func TestBotE2E(t *testing.T) {
 		t.Fatalf("Failed to insert data: %v", err)
 	}
 
-	// Создаем мок-сервер для API Telegram
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte(`{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`)); err != nil {
-			t.Fatalf("mockServer failed to write response: %v", err)
-		}
-	}))
-	defer mockServer.Close()
+	type sentMessage struct {
+		Text             string
+		ReplyToMessageID string
+	}
 
-	// Создаем мок-объект бота с фиктивным токеном и перенаправляем запросы на мок-сервер
-	apiURL := mockServer.URL + "/bot%s/%s"
-	bot, err := tgbotapi.NewBotAPIWithClient("fake-token", apiURL, mockServer.Client())
+	var (
+		sentMessagesMu sync.Mutex
+		sentMessages   []sentMessage
+	)
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("mock transport failed to parse form: %v", err)
+			}
+			if strings.Contains(r.URL.Path, "/sendMessage") {
+				sentMessagesMu.Lock()
+				sentMessages = append(sentMessages, sentMessage{
+					Text:             r.Form.Get("text"),
+					ReplyToMessageID: r.Form.Get("reply_to_message_id"),
+				})
+				sentMessagesMu.Unlock()
+			}
+			body := `{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`
+			if strings.Contains(r.URL.Path, "/sendMessage") {
+				body = `{"ok":true,"result":{"message_id":1,"date":0,"chat":{"id":-987654321,"type":"group"},"text":"ok"}}`
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    r,
+			}, nil
+		}),
+	}
+
+	// Создаем мок-объект бота с фиктивным токеном и кастомным transport без реального listener
+	apiURL := "https://telegram.test/bot%s/%s"
+	bot, err := tgbotapi.NewBotAPIWithClient("fake-token", apiURL, client)
 	if err != nil {
 		t.Fatalf("Error creating bot: %v", err)
 	}
@@ -115,6 +153,11 @@ func TestBotE2E(t *testing.T) {
 					} else { // Обработка обычных сообщений
 						handlers.HandlePenCommand(update, bot, db)
 					}
+
+					if klewoRe.MatchString(strings.ToLower(update.Message.Text)) {
+						echo := tgbotapi.NewMessage(chatID, update.Message.Text)
+						_, _ = bot.Send(echo)
+					}
 				} else if update.MyChatMember != nil { // Обработка добавления бота в чат
 					handlers.HandleBotAddition(update, bot)
 				}
@@ -133,6 +176,31 @@ func TestBotE2E(t *testing.T) {
 
 		// Проверяем, что новый пользователь зарегистрирован с длиной 5 см
 		testutils.CheckPenLength(t, db, 44444444, nil, 5)
+	})
+
+	t.Run("KlewoEchoWithoutReply", func(t *testing.T) {
+		sentMessagesMu.Lock()
+		start := len(sentMessages)
+		sentMessagesMu.Unlock()
+
+		testText := "@vasya клёво"
+		testutils.SendMessage(t, updates, specificChatID, 33333333, testText)
+		time.Sleep(1 * time.Second)
+
+		sentMessagesMu.Lock()
+		defer sentMessagesMu.Unlock()
+
+		for _, msg := range sentMessages[start:] {
+			if msg.Text != testText {
+				continue
+			}
+			if msg.ReplyToMessageID != "" {
+				t.Fatalf("expected echo without reply_to_message_id, got %q", msg.ReplyToMessageID)
+			}
+			return
+		}
+
+		t.Fatalf("expected echo message %q to be sent", testText)
 	})
 
 	// Тестирование команды /pen и регистрации нового пользователя

@@ -42,8 +42,8 @@ func TestRunMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count migrations: %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("Expected 2 migrations to be applied, but count is %d", count)
+	if count != 3 {
+		t.Fatalf("Expected 3 migrations to be applied, but count is %d", count)
 	}
 
 	// Проверяем, что колонка is_active добавлена в таблицу pens
@@ -87,6 +87,14 @@ func TestRunMigrations(t *testing.T) {
 	}
 	if tableName != "gemini_memories" {
 		t.Fatalf("Expected table name 'gemini_memories', but got %s", tableName)
+	}
+
+	err = db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='gemini_user_facts';").Scan(&tableName)
+	if err != nil {
+		t.Fatalf("Table 'gemini_user_facts' does not exist: %v", err)
+	}
+	if tableName != "gemini_user_facts" {
+		t.Fatalf("Expected table name 'gemini_user_facts', but got %s", tableName)
 	}
 }
 

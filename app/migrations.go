@@ -30,9 +30,26 @@ var migrations = []Migration{
 			content TEXT NOT NULL,
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
-		CREATE INDEX IF NOT EXISTS idx_gemini_memories_chat_created_at
-			ON gemini_memories(chat_id, created_at);
-		`,
+			CREATE INDEX IF NOT EXISTS idx_gemini_memories_chat_created_at
+				ON gemini_memories(chat_id, created_at);
+			`,
+	},
+	{
+		ID:   3,
+		Name: "create_gemini_user_facts_table",
+		SQL: `
+			CREATE TABLE IF NOT EXISTS gemini_user_facts (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				chat_id INTEGER NOT NULL,
+				user_name TEXT NOT NULL,
+				fact TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_gemini_user_facts_chat_created_at
+				ON gemini_user_facts(chat_id, created_at);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_gemini_user_facts_unique
+				ON gemini_user_facts(chat_id, user_name, fact);
+			`,
 	},
 }
 
