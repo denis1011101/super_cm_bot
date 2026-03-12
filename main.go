@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,9 @@ import (
 
 // klewoRe матчит паттерн "@юзер клево/клёво" с необязательными знаками препинания в конце
 var klewoRe = regexp.MustCompile(`@\S+\s+кл[её]во[!?]?`)
+
+// sosalRe матчит короткие утвердительные слова/фразы
+var sosalRe = regexp.MustCompile(`(?i)^(да|угу|ага|ну да|конечно|естественно|разумеется|точно|реально|всё так|все так|так|именно|верно|йеп|еп|ок|окей|yes|yep|yeah|yea|sure|ладно|допустим)\s*\?\s*$`)
 
 // main создаёт бота и слушает обновления
 func main() {
@@ -174,7 +178,13 @@ func main() {
 					handlers.HandlePenCommand(update, bot, db)
 				}
 
-				// эхо: @юзер клево/клёво ? — повторить сообщение
+				// "сосал?" — реагируем на утвердительные ответы (1 из 5)
+			if sosalRe.MatchString(strings.TrimSpace(update.Message.Text)) && rand.Intn(5) == 0 {
+				sosal := tgbotapi.NewMessage(chatID, "сосал?")
+				_, _ = bot.Send(sosal)
+			}
+
+			// эхо: @юзер клево/клёво ? — повторить сообщение
 				if klewoRe.MatchString(strings.ToLower(update.Message.Text)) {
 					echo := tgbotapi.NewMessage(chatID, update.Message.Text)
 					_, _ = bot.Send(echo)

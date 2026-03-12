@@ -425,3 +425,30 @@ func TestBotE2E(t *testing.T) {
 		}
 	})
 }
+
+func TestSosalRegex(t *testing.T) {
+	sosalRe := regexp.MustCompile(`(?i)^(да|угу|ага|ну да|конечно|естественно|разумеется|точно|реально|всё так|все так|так|именно|верно|йеп|еп|ок|окей|yes|yep|yeah|yea|sure|ладно|допустим)\s*\?\s*$`)
+
+	shouldMatch := []string{
+		"да?", "Да?", "ДА?", "да ?", "угу?", "ага?",
+		"конечно?", "ну да?", "yes?", "yep?", "yeah?",
+		"ок?", "окей?", "точно?", "реально?", "так?",
+		"всё так?", "все так?", "именно?", "верно?",
+	}
+	shouldNotMatch := []string{
+		"да", "угу", "ага", "конечно", "yes",
+		"да!", "да.", "привет?", "нет?", "может?",
+		"да конечно?", "ну привет?", "",
+	}
+
+	for _, s := range shouldMatch {
+		if !sosalRe.MatchString(strings.TrimSpace(s)) {
+			t.Errorf("expected match for %q", s)
+		}
+	}
+	for _, s := range shouldNotMatch {
+		if sosalRe.MatchString(strings.TrimSpace(s)) {
+			t.Errorf("expected no match for %q", s)
+		}
+	}
+}
