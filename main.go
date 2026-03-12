@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/app/handlers"
@@ -23,7 +24,7 @@ import (
 var klewoRe = regexp.MustCompile(`@\S+\s+кл[её]во[!?]?`)
 
 // sosalRe матчит короткие утвердительные слова/фразы
-var sosalRe = regexp.MustCompile(`(?i)^(да|угу|ага|ну да|конечно|естественно|разумеется|точно|реально|всё так|все так|так|именно|верно|йеп|еп|ок|окей|yes|yep|yeah|yea|sure|ладно|допустим)\s*\?\s*$`)
+var sosalRe = regexp.MustCompile(`(?i)^(да|da|угу|ага|ну да|конечно|естественно|разумеется|точно|реально|всё так|все так|так|именно|верно|йеп|еп|ок|окей|yes|yep|yeah|yea|sure|ладно|допустим)\s*\?\s*$`)
 
 // main создаёт бота и слушает обновления
 func main() {
@@ -179,15 +180,21 @@ func main() {
 				}
 
 				// "сосал?" — реагируем на утвердительные ответы (1 из 5)
-			if sosalRe.MatchString(strings.TrimSpace(update.Message.Text)) && rand.Intn(5) == 0 {
-				sosal := tgbotapi.NewMessage(chatID, "сосал?")
-				_, _ = bot.Send(sosal)
-			}
+				if sosalRe.MatchString(strings.TrimSpace(update.Message.Text)) && rand.Intn(5) == 0 {
+					go func(chatID int64) {
+						time.Sleep(time.Duration(2+rand.Intn(4)) * time.Second)
+						sosal := tgbotapi.NewMessage(chatID, "сосал?")
+						_, _ = bot.Send(sosal)
+					}(chatID)
+				}
 
-			// эхо: @юзер клево/клёво ? — повторить сообщение
+				// эхо: @юзер клево/клёво ? — повторить сообщение
 				if klewoRe.MatchString(strings.ToLower(update.Message.Text)) {
-					echo := tgbotapi.NewMessage(chatID, update.Message.Text)
-					_, _ = bot.Send(echo)
+					go func(chatID int64, text string) {
+						time.Sleep(time.Duration(2+rand.Intn(4)) * time.Second)
+						echo := tgbotapi.NewMessage(chatID, text)
+						_, _ = bot.Send(echo)
+					}(chatID, update.Message.Text)
 				} else {
 					// если нас тегают или отвечают на наше сообщение -> immediate Gemini
 					isMention := false
