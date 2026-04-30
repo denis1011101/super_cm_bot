@@ -10,6 +10,10 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+func normalizeUnhandsomeDiffSize(diffSize int) int {
+	return min(diffSize, -1)
+}
+
 func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
@@ -82,6 +86,9 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 
 	// Вычисление нового размера
 	result := app.SpinDiffPenSize(pen)
+	if result.ResultType != "RESET" {
+		result.Size = normalizeUnhandsomeDiffSize(result.Size) // гарантируем уменьшение минимум на 1
+	}
 	newSize := pen.Size + result.Size
 
 	// Обновление значения у выигравшего участника и времени последнего обновления у всех участников

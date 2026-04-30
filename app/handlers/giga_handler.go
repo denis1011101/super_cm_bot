@@ -53,14 +53,20 @@ func averageVoltage() (int, error) {
 
 // Закон Ома
 func ohmLaw(resistance int) (int, error) {
-    voltage, err := averageVoltage()
-    if err != nil {
-        return 0, err
-    }
+	voltage, err := averageVoltage()
+	if err != nil {
+		return 0, err
+	}
     if resistance == 0 {
         return 0, fmt.Errorf("resistance can't be zero")
-    }
-    return voltage / resistance, nil
+	}
+	return voltage / resistance, nil
+}
+
+func normalizeGigaAddSize(addSize int) int {
+	addSize = min(addSize, 15)
+	addSize = max(addSize, 1)
+	return addSize
 }
 
 func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
@@ -179,8 +185,7 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 			formulaName = "ohmLaw"
 	}
 
-	addSize = min(addSize, 15)
-	addSize = max(addSize, 1)
+	addSize = normalizeGigaAddSize(addSize)
 
 	// Holiday multiplier: в период 24 Dec..31 Dec и 1..2 Jan в 2/3 случаев умножаем addSize на случайный 1..5
 	if isHoliday {
