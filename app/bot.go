@@ -33,7 +33,7 @@ func ArchiveInactiveUsers(db *sql.DB) error {
 	query := `
         UPDATE pens
         SET is_active = FALSE
-        WHERE pen_last_update_at < ?
+        WHERE (pen_last_update_at IS NULL OR pen_last_update_at < ?)
         AND is_active = TRUE
     `
 

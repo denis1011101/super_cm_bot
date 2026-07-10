@@ -85,21 +85,20 @@ func TestArchiveInactiveUsers_RecentUserStaysActive(t *testing.T) {
 	}
 }
 
-// TestArchiveInactiveUsers_NullLastUpdateNotArchived — пользователь с NULL pen_last_update_at
-// НЕ должен архивироваться, потому что в SQLite NULL < date = NULL (не TRUE).
-// Регрессионный тест на поведение ArchiveInactiveUsers: регистрация через /giga или /unh
-// раньше оставляла pen_last_update_at = NULL, из-за чего такие юзеры никогда не архивировались
-// и продолжали побеждать в giga/unh после долгого отсутствия. Фикс: registerBot теперь
-// ставит pen_last_update_at = CURRENT_TIMESTAMP при создании записи.
-func TestArchiveInactiveUsers_NullLastUpdateNotArchived(t *testing.T) {
+// TestArchiveInactiveUsers_NullLastUpdateArchived — пользователь с NULL pen_last_update_at
+// ДОЛЖЕН архивироваться. NULL остаётся только у легаси-записей, созданных до того, как
+// registerBot начал ставить pen_last_update_at = CURRENT_TIMESTAMP: спина у них не было
+// никогда, но из-за SQLite-семантики NULL < date = NULL архиватор их раньше пропускал,
+// и они бесконечно участвовали в giga/unh.
+func TestArchiveInactiveUsers_NullLastUpdateArchived(t *testing.T) {
 	db := setupBotDB(t)
 	insertPen(t, db, 3, 100, nil) // NULL pen_last_update_at
 
 	if err := app.ArchiveInactiveUsers(db); err != nil {
 		t.Fatalf("ArchiveInactiveUsers: %v", err)
 	}
-	if !isActiveFor(t, db, 3, 100) {
-		t.Fatal("user with NULL pen_last_update_at should not be archived")
+	if isActiveFor(t, db, 3, 100) {
+		t.Fatal("user with NULL pen_last_update_at should be archived")
 	}
 }
 
