@@ -649,6 +649,88 @@ func LoadRandomGeminiUserFacts(db *sql.DB, chatID int64, limit int) ([]GeminiUse
 	return facts, nil
 }
 
+// LoadGeminiUserFactsByNames returns the newest facts saved for any of the
+// supplied user names. Name matching is case-insensitive and facts are always
+// restricted to one chat.
+func LoadGeminiUserFactsByNames(db *sql.DB, chatID int64, userNames []string, limit int) ([]GeminiUserFact, error) {
+	if db == nil {
+		return nil, errors.New("db is nil")
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+
+	wantedNames := make([]string, 0, len(userNames))
+	for _, userName := range userNames {
+		userName = strings.TrimPrefix(normalizeMemoryRole(userName, ""), "@")
+		if userName == "" {
+			continue
+		}
+		alreadyAdded := false
+		for _, existing := range wantedNames {
+			if strings.EqualFold(existing, userName) {
+				alreadyAdded = true
+				break
+			}
+		}
+		if !alreadyAdded {
+			wantedNames = append(wantedNames, userName)
+		}
+	}
+	if len(wantedNames) == 0 {
+		return nil, nil
+	}
+
+	rows, err := db.Query(
+		`SELECT user_name, fact
+		FROM gemini_user_facts
+		WHERE chat_id = ?
+		ORDER BY created_at DESC, id DESC`,
+		chatID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing gemini user facts rows: %v", closeErr)
+		}
+	}()
+
+	facts := make([]GeminiUserFact, 0, limit)
+	seenFacts := make(map[string]struct{}, limit)
+	for rows.Next() {
+		var fact GeminiUserFact
+		if err := rows.Scan(&fact.UserName, &fact.Fact); err != nil {
+			return nil, err
+		}
+		matches := false
+		storedName := strings.TrimPrefix(normalizeMemoryRole(fact.UserName, ""), "@")
+		for _, wantedName := range wantedNames {
+			if strings.EqualFold(storedName, wantedName) {
+				matches = true
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		factKey := strings.ToLower(fact.Fact)
+		if _, exists := seenFacts[factKey]; exists {
+			continue
+		}
+		seenFacts[factKey] = struct{}{}
+		facts = append(facts, fact)
+		if len(facts) == limit {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return facts, nil
+}
+
 func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Time) (string, error) {
 	if db == nil {
 		return "", errors.New("db is nil")

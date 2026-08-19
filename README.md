@@ -57,6 +57,7 @@ The bot supports the following commands:
 - `/toplength`     - show the top 10 by pen length
 - `/topgiga`       - show the top 10 gigachats
 - `/topunhandsome` - show the top 10 unhandsome members
+- `/memory`        - show what AI remembers about you in this chat
 
 
 ## Administrative

@@ -165,6 +165,10 @@ func main() {
 		"/topgiga":                            handlers.TopGiga,
 		"/topunhandsome@super_cum_lovers_bot": handlers.TopUnhandsome,
 		"/topunh":                             handlers.TopUnhandsome,
+		"/memory@super_cum_lovers_bot":        handlers.ShowMyGeminiFacts,
+		"/memory":                             handlers.ShowMyGeminiFacts,
+		"/myfacts@super_cum_lovers_bot":       handlers.ShowMyGeminiFacts,
+		"/myfacts":                            handlers.ShowMyGeminiFacts,
 	}
 
 	// Обработка обновлений
