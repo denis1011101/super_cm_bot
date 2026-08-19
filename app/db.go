@@ -591,6 +591,8 @@ type GeminiUserFact struct {
 	Fact     string
 }
 
+const maxGeminiUserFactsPerName = 30
+
 func SaveGeminiUserFact(db *sql.DB, chatID int64, userName, fact string, createdAt time.Time) error {
 	if db == nil {
 		return errors.New("db is nil")
@@ -601,12 +603,144 @@ func SaveGeminiUserFact(db *sql.DB, chatID int64, userName, fact string, created
 		return nil
 	}
 
-	_, err := db.Exec(
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(
 		`INSERT OR IGNORE INTO gemini_user_facts (chat_id, user_name, fact, created_at)
 		VALUES (?, ?, ?, ?)`,
 		chatID, userName, fact, createdAt.UTC().Format(sqliteTimestampLayout),
 	)
-	return err
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if err := pruneGeminiUserFacts(tx, chatID, userName, maxGeminiUserFactsPerName); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func pruneGeminiUserFacts(tx *sql.Tx, chatID int64, userName string, limit int) error {
+	if limit <= 0 {
+		return nil
+	}
+
+	ids, err := geminiUserFactIDsByNames(tx, chatID, []string{userName}, limit)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec("DELETE FROM gemini_user_facts WHERE id = ?", id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeleteGeminiUserFactsByNames deletes facts belonging to any supplied name
+// in one chat and returns the number of deleted rows.
+func DeleteGeminiUserFactsByNames(db *sql.DB, chatID int64, userNames []string) (int64, error) {
+	if db == nil {
+		return 0, errors.New("db is nil")
+	}
+
+	wantedNames := normalizeGeminiFactNames(userNames)
+	if len(wantedNames) == 0 {
+		return 0, nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	ids, err := geminiUserFactIDsByNames(tx, chatID, wantedNames, 0)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec("DELETE FROM gemini_user_facts WHERE id = ?", id); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int64(len(ids)), nil
+}
+
+func geminiUserFactIDsByNames(db SQLExecutor, chatID int64, userNames []string, keep int) ([]int64, error) {
+	wantedNames := normalizeGeminiFactNames(userNames)
+	rows, err := db.Query(
+		`SELECT id, user_name
+		FROM gemini_user_facts
+		WHERE chat_id = ?
+		ORDER BY created_at DESC, id DESC`,
+		chatID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	ids := make([]int64, 0)
+	matched := 0
+	for rows.Next() {
+		var (
+			id       int64
+			userName string
+		)
+		if err := rows.Scan(&id, &userName); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if !geminiFactNameMatches(userName, wantedNames) {
+			continue
+		}
+		matched++
+		if matched > keep {
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func normalizeGeminiFactNames(userNames []string) []string {
+	wantedNames := make([]string, 0, len(userNames))
+	for _, userName := range userNames {
+		userName = strings.TrimPrefix(normalizeMemoryRole(userName, ""), "@")
+		if userName == "" {
+			continue
+		}
+		if !geminiFactNameMatches(userName, wantedNames) {
+			wantedNames = append(wantedNames, userName)
+		}
+	}
+	return wantedNames
+}
+
+func geminiFactNameMatches(userName string, wantedNames []string) bool {
+	userName = strings.TrimPrefix(normalizeMemoryRole(userName, ""), "@")
+	for _, wantedName := range wantedNames {
+		if strings.EqualFold(userName, wantedName) {
+			return true
+		}
+	}
+	return false
 }
 
 func LoadRandomGeminiUserFacts(db *sql.DB, chatID int64, limit int) ([]GeminiUserFact, error) {
@@ -660,23 +794,7 @@ func LoadGeminiUserFactsByNames(db *sql.DB, chatID int64, userNames []string, li
 		return nil, nil
 	}
 
-	wantedNames := make([]string, 0, len(userNames))
-	for _, userName := range userNames {
-		userName = strings.TrimPrefix(normalizeMemoryRole(userName, ""), "@")
-		if userName == "" {
-			continue
-		}
-		alreadyAdded := false
-		for _, existing := range wantedNames {
-			if strings.EqualFold(existing, userName) {
-				alreadyAdded = true
-				break
-			}
-		}
-		if !alreadyAdded {
-			wantedNames = append(wantedNames, userName)
-		}
-	}
+	wantedNames := normalizeGeminiFactNames(userNames)
 	if len(wantedNames) == 0 {
 		return nil, nil
 	}
@@ -704,15 +822,7 @@ func LoadGeminiUserFactsByNames(db *sql.DB, chatID int64, userNames []string, li
 		if err := rows.Scan(&fact.UserName, &fact.Fact); err != nil {
 			return nil, err
 		}
-		matches := false
-		storedName := strings.TrimPrefix(normalizeMemoryRole(fact.UserName, ""), "@")
-		for _, wantedName := range wantedNames {
-			if strings.EqualFold(storedName, wantedName) {
-				matches = true
-				break
-			}
-		}
-		if !matches {
+		if !geminiFactNameMatches(fact.UserName, wantedNames) {
 			continue
 		}
 		factKey := strings.ToLower(fact.Fact)

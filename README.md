@@ -58,6 +58,7 @@ The bot supports the following commands:
 - `/topgiga`       - show the top 10 gigachats
 - `/topunhandsome` - show the top 10 unhandsome members
 - `/memory`        - show what AI remembers about you in this chat
+- `/forgetme`      - delete what AI remembers about you in this chat
 
 
 ## Administrative

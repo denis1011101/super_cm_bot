@@ -2,6 +2,7 @@ package tests
 
 import (
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,9 @@ import (
 
 //go:linkname buildMyFactsMessage github.com/denis1011101/super_cm_bot/app/handlers.buildMyFactsMessage
 func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string, error)
+
+//go:linkname deleteMyFacts github.com/denis1011101/super_cm_bot/app/handlers.deleteMyFacts
+func deleteMyFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error)
 
 func TestLoadGeminiUserFactsByNames(t *testing.T) {
 	db := setupGeminiDB(t)
@@ -50,6 +54,90 @@ func TestLoadGeminiUserFactsByNames(t *testing.T) {
 		if fact.Fact == "чужой пользователь" || fact.Fact == "чужой чат" {
 			t.Fatalf("unrelated fact leaked into results: %+v", facts)
 		}
+	}
+}
+
+func TestSaveGeminiUserFactKeepsThirtyNewestPerName(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(445)
+	start := time.Now().Add(-time.Hour)
+
+	for i := 0; i < 35; i++ {
+		if err := app.SaveGeminiUserFact(
+			db,
+			chatID,
+			"Денис",
+			fmt.Sprintf("факт-%02d", i),
+			start.Add(time.Duration(i)*time.Minute),
+		); err != nil {
+			t.Fatalf("save fact %d: %v", i, err)
+		}
+	}
+
+	var count int
+	if err := db.QueryRow(
+		"SELECT COUNT(*) FROM gemini_user_facts WHERE chat_id = ? AND user_name = ?",
+		chatID,
+		"Денис",
+	).Scan(&count); err != nil {
+		t.Fatalf("count facts: %v", err)
+	}
+	if count != 30 {
+		t.Fatalf("expected 30 facts after pruning, got %d", count)
+	}
+
+	var oldestRemaining string
+	if err := db.QueryRow(
+		`SELECT fact FROM gemini_user_facts
+		WHERE chat_id = ? AND user_name = ?
+		ORDER BY created_at, id
+		LIMIT 1`,
+		chatID,
+		"Денис",
+	).Scan(&oldestRemaining); err != nil {
+		t.Fatalf("load oldest remaining fact: %v", err)
+	}
+	if oldestRemaining != "факт-05" {
+		t.Fatalf("expected oldest facts to be pruned, oldest remaining is %q", oldestRemaining)
+	}
+}
+
+func TestDeleteMyFactsOnlyDeletesCurrentUserAndChat(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(446)
+	user := &tgbotapi.User{FirstName: "Денис", LastName: "Иванов", UserName: "denis1011101"}
+	now := time.Now()
+
+	testFacts := []struct {
+		chatID   int64
+		userName string
+	}{
+		{chatID, "Денис"},
+		{chatID, "DENIS1011101"},
+		{chatID, "Денис Иванов"},
+		{chatID, "Дима"},
+		{chatID + 1, "Денис"},
+	}
+	for i, testFact := range testFacts {
+		if err := app.SaveGeminiUserFact(db, testFact.chatID, testFact.userName, fmt.Sprintf("факт-%d", i), now); err != nil {
+			t.Fatalf("save fact: %v", err)
+		}
+	}
+
+	deleted, err := deleteMyFacts(db, chatID, user)
+	if err != nil {
+		t.Fatalf("delete own facts: %v", err)
+	}
+	if deleted != 3 {
+		t.Fatalf("expected 3 deleted facts, got %d", deleted)
+	}
+
+	var remaining int
+	if err := db.QueryRow("SELECT COUNT(*) FROM gemini_user_facts").Scan(&remaining); err != nil {
+		t.Fatalf("count remaining facts: %v", err)
+	}
+	if remaining != 2 {
+		t.Fatalf("expected other user and chat facts to remain, got %d rows", remaining)
 	}
 }
 

@@ -169,6 +169,8 @@ func main() {
 		"/memory":                             handlers.ShowMyGeminiFacts,
 		"/myfacts@super_cum_lovers_bot":       handlers.ShowMyGeminiFacts,
 		"/myfacts":                            handlers.ShowMyGeminiFacts,
+		"/forgetme@super_cum_lovers_bot":      handlers.ForgetMyGeminiFacts,
+		"/forgetme":                           handlers.ForgetMyGeminiFacts,
 	}
 
 	// Обработка обновлений

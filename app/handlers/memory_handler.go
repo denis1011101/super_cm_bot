@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"unicode/utf8"
@@ -36,17 +37,33 @@ func ShowMyGeminiFacts(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB)
 	app.SendMessage(update.Message.Chat.ID, message, bot, update.Message.MessageID)
 }
 
+// ForgetMyGeminiFacts deletes facts about the command author in this chat.
+func ForgetMyGeminiFacts(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+	if update.Message == nil || update.Message.Chat == nil || update.Message.From == nil {
+		log.Printf("ForgetMyGeminiFacts: update has no message, chat or author")
+		return
+	}
+
+	deleted, err := deleteMyFacts(db, update.Message.Chat.ID, update.Message.From)
+	if err != nil {
+		log.Printf("ForgetMyGeminiFacts: failed to delete facts: %v", err)
+		app.SendMessage(update.Message.Chat.ID, "Не получилось очистить факты. Попробуй позже.", bot, update.Message.MessageID)
+		return
+	}
+
+	message := "ИИ и так ничего о тебе не помнил."
+	if deleted > 0 {
+		message = fmt.Sprintf("Готово, ИИ забыл о тебе фактов: %d.", deleted)
+	}
+	app.SendMessage(update.Message.Chat.ID, message, bot, update.Message.MessageID)
+}
+
 func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string, error) {
 	if user == nil {
 		return "", errors.New("user is nil")
 	}
 
-	aliases := []string{user.FirstName, user.UserName}
-	if user.FirstName != "" && user.LastName != "" {
-		aliases = append(aliases, user.FirstName+" "+user.LastName)
-	}
-
-	facts, err := app.LoadGeminiUserFactsByNames(db, chatID, aliases, myFactsLimit)
+	facts, err := app.LoadGeminiUserFactsByNames(db, chatID, geminiUserAliases(user), myFactsLimit)
 	if err != nil {
 		return "", err
 	}
@@ -75,4 +92,19 @@ func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string,
 	}
 
 	return message.String(), nil
+}
+
+func deleteMyFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
+	if user == nil {
+		return 0, errors.New("user is nil")
+	}
+	return app.DeleteGeminiUserFactsByNames(db, chatID, geminiUserAliases(user))
+}
+
+func geminiUserAliases(user *tgbotapi.User) []string {
+	aliases := []string{user.FirstName, user.UserName}
+	if user.FirstName != "" && user.LastName != "" {
+		aliases = append(aliases, user.FirstName+" "+user.LastName)
+	}
+	return aliases
 }
