@@ -28,6 +28,8 @@ const (
 	geminiAutoCmdMin   = 10
 	geminiAutoCmdMax   = 20
 	geminiAutoCmdGap   = 2 * time.Hour
+	geminiDelayMin     = 2 * time.Second
+	geminiDelayRange   = 2 * time.Second
 )
 
 type SearchAdapter interface {
@@ -58,6 +60,7 @@ type GeminiAgentConfig struct {
 	MemoryWindow       time.Duration
 	MemoryLimit        int
 	AutoCommandHandler GeminiAutoCommandHandler
+	ResponseDelay      func() time.Duration
 }
 
 func (GeminiGoogleSearchAdapter) ShouldSearch(userText string) bool {
@@ -94,22 +97,28 @@ func isGemini3(model string) bool {
 	return strings.HasPrefix(model, "gemini-3")
 }
 
-type GeminiAgent struct {
-	db           *sql.DB
-	bot          *tgbotapi.BotAPI
-	client       *http.Client
-	now          func() time.Time
-	search       SearchAdapter
-	model        string
-	apiKey       string
-	apiBaseURL   string
-	memoryWindow time.Duration
-	memoryLimit  int
-	autoCommand  GeminiAutoCommandHandler
+type pendingGeminiResponse struct {
+	message tgbotapi.Message
+}
 
-	mu              sync.Mutex
-	geminiLast      map[int64]time.Time
-	autoCommandLast map[int64]time.Time
+type GeminiAgent struct {
+	db            *sql.DB
+	bot           *tgbotapi.BotAPI
+	client        *http.Client
+	now           func() time.Time
+	search        SearchAdapter
+	model         string
+	apiKey        string
+	apiBaseURL    string
+	memoryWindow  time.Duration
+	memoryLimit   int
+	autoCommand   GeminiAutoCommandHandler
+	responseDelay func() time.Duration
+
+	mu               sync.Mutex
+	geminiLast       map[int64]time.Time
+	autoCommandLast  map[int64]time.Time
+	pendingResponses map[int64]*pendingGeminiResponse
 }
 
 func NewGeminiAgent(db *sql.DB, bot *tgbotapi.BotAPI) *GeminiAgent {
@@ -150,21 +159,27 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 	if memoryLimit <= 0 {
 		memoryLimit = geminiMemoryLimit
 	}
+	responseDelay := cfg.ResponseDelay
+	if responseDelay == nil {
+		responseDelay = randomGeminiResponseDelay
+	}
 
 	return &GeminiAgent{
-		db:              cfg.DB,
-		bot:             cfg.Bot,
-		client:          client,
-		now:             nowFn,
-		search:          search,
-		model:           model,
-		apiKey:          cfg.APIKey,
-		apiBaseURL:      apiBaseURL,
-		memoryWindow:    memoryWindow,
-		memoryLimit:     memoryLimit,
-		autoCommand:     cfg.AutoCommandHandler,
-		geminiLast:      make(map[int64]time.Time),
-		autoCommandLast: make(map[int64]time.Time),
+		db:               cfg.DB,
+		bot:              cfg.Bot,
+		client:           client,
+		now:              nowFn,
+		search:           search,
+		model:            model,
+		apiKey:           cfg.APIKey,
+		apiBaseURL:       apiBaseURL,
+		memoryWindow:     memoryWindow,
+		memoryLimit:      memoryLimit,
+		autoCommand:      cfg.AutoCommandHandler,
+		responseDelay:    responseDelay,
+		geminiLast:       make(map[int64]time.Time),
+		autoCommandLast:  make(map[int64]time.Time),
+		pendingResponses: make(map[int64]*pendingGeminiResponse),
 	}
 }
 
@@ -175,7 +190,7 @@ func (a *GeminiAgent) SetAutoCommandHandler(handler GeminiAutoCommandHandler) {
 }
 
 func (a *GeminiAgent) TryRespond(update tgbotapi.Update, targetChatID int64) bool {
-	if update.Message == nil {
+	if update.Message == nil || update.Message.Chat == nil {
 		return false
 	}
 	m := update.Message
@@ -204,6 +219,25 @@ func (a *GeminiAgent) TryRespond(update tgbotapi.Update, targetChatID int64) boo
 	}
 
 	a.mu.Lock()
+	if pending := a.pendingResponses[targetChatID]; pending != nil {
+		if pending.message.MessageID == m.MessageID {
+			a.mu.Unlock()
+			return false
+		}
+
+		combined := *m
+		if sameGeminiSender(pending.message.From, m.From) {
+			combined.Text = strings.TrimSpace(pending.message.Text) + "\n" + text
+		}
+		next := &pendingGeminiResponse{message: combined}
+		a.pendingResponses[targetChatID] = next
+		delay := a.responseDelay()
+		a.mu.Unlock()
+
+		a.schedulePendingResponse(targetChatID, next, delay)
+		return true
+	}
+
 	nextAvail := a.geminiLast[targetChatID]
 	if a.now().Before(nextAvail) {
 		a.mu.Unlock()
@@ -212,18 +246,56 @@ func (a *GeminiAgent) TryRespond(update tgbotapi.Update, targetChatID int64) boo
 	extraMinutes := rand.IntN(int(geminiMaxExtra/time.Minute) + 1) //nolint:gosec
 	cooldown := geminiMinCooldown + time.Duration(extraMinutes)*time.Minute
 	a.geminiLast[targetChatID] = a.now().Add(cooldown)
+
+	pending := &pendingGeminiResponse{message: *m}
+	a.pendingResponses[targetChatID] = pending
+	delay := a.responseDelay()
 	a.mu.Unlock()
 
-	go func(msg tgbotapi.Message) {
-		if err := a.respond(msg); err != nil {
+	a.schedulePendingResponse(targetChatID, pending, delay)
+	return true
+}
+
+func randomGeminiResponseDelay() time.Duration {
+	milliseconds := rand.IntN(int(geminiDelayRange/time.Millisecond) + 1) //nolint:gosec
+	return geminiDelayMin + time.Duration(milliseconds)*time.Millisecond
+}
+
+func sameGeminiSender(first, second *tgbotapi.User) bool {
+	if first == nil || second == nil {
+		return false
+	}
+	if first.ID != 0 || second.ID != 0 {
+		return first.ID == second.ID
+	}
+	return first.UserName != "" && strings.EqualFold(first.UserName, second.UserName)
+}
+
+func (a *GeminiAgent) schedulePendingResponse(chatID int64, pending *pendingGeminiResponse, delay time.Duration) {
+	if delay < 0 {
+		delay = 0
+	}
+
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+
+		a.mu.Lock()
+		if a.pendingResponses[chatID] != pending {
+			a.mu.Unlock()
+			return
+		}
+		delete(a.pendingResponses, chatID)
+		a.mu.Unlock()
+
+		if err := a.respond(pending.message); err != nil {
 			a.mu.Lock()
-			delete(a.geminiLast, msg.Chat.ID)
+			delete(a.geminiLast, chatID)
 			a.mu.Unlock()
 			log.Printf("GeminiAgent.TryRespond: llm/send error: %v", err)
 		}
-	}(*m)
-
-	return true
+	}()
 }
 
 func (a *GeminiAgent) TryRespondImmediate(m tgbotapi.Message) bool {
@@ -238,6 +310,15 @@ func (a *GeminiAgent) TryRespondImmediate(m tgbotapi.Message) bool {
 	msgTime := time.Unix(int64(m.Date), 0)
 	if a.now().Sub(msgTime) > 5*time.Minute {
 		return false
+	}
+
+	if m.Chat != nil {
+		a.mu.Lock()
+		if a.pendingResponses[m.Chat.ID] != nil {
+			delete(a.pendingResponses, m.Chat.ID)
+			delete(a.geminiLast, m.Chat.ID)
+		}
+		a.mu.Unlock()
 	}
 
 	go func(msg tgbotapi.Message) {
