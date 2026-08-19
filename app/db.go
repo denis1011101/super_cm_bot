@@ -649,9 +649,9 @@ func LoadRandomGeminiUserFacts(db *sql.DB, chatID int64, limit int) ([]GeminiUse
 	return facts, nil
 }
 
-// LoadGeminiUserFactsByNames returns the newest facts saved for any of the
-// supplied user names. Name matching is case-insensitive and facts are always
-// restricted to one chat.
+// LoadGeminiUserFactsByNames returns random facts saved for any of the supplied
+// user names. Name matching is case-insensitive and facts are always restricted
+// to one chat.
 func LoadGeminiUserFactsByNames(db *sql.DB, chatID int64, userNames []string, limit int) ([]GeminiUserFact, error) {
 	if db == nil {
 		return nil, errors.New("db is nil")
@@ -685,7 +685,7 @@ func LoadGeminiUserFactsByNames(db *sql.DB, chatID int64, userNames []string, li
 		`SELECT user_name, fact
 		FROM gemini_user_facts
 		WHERE chat_id = ?
-		ORDER BY created_at DESC, id DESC`,
+		ORDER BY RANDOM()`,
 		chatID,
 	)
 	if err != nil {

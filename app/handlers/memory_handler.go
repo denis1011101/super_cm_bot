@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	myFactsLimit             = 20
+	myFactsLimit             = 3
 	maxMyFactsMessageRunes   = 4000
 	noSavedFactsMessage      = "ИИ пока ничего о тебе не запомнил."
 	savedFactsMessageHeading = "Вот что ИИ запомнил о тебе:"

@@ -28,6 +28,8 @@ func TestLoadGeminiUserFactsByNames(t *testing.T) {
 		{chatID, "Денис", "старый факт", now.Add(-3 * time.Hour)},
 		{chatID, "denis1011101", "новый факт", now.Add(-time.Hour)},
 		{chatID, "ДЕНИС", "новый факт", now},
+		{chatID, "Денис", "третий факт", now},
+		{chatID, "denis1011101", "четвёртый факт", now},
 		{chatID, "Дима", "чужой пользователь", now},
 		{chatID + 1, "Денис", "чужой чат", now},
 	}
@@ -37,20 +39,17 @@ func TestLoadGeminiUserFactsByNames(t *testing.T) {
 		}
 	}
 
-	facts, err := app.LoadGeminiUserFactsByNames(db, chatID, []string{"денис", "@Denis1011101"}, 10)
+	facts, err := app.LoadGeminiUserFactsByNames(db, chatID, []string{"денис", "@Denis1011101"}, 3)
 	if err != nil {
 		t.Fatalf("load facts by names: %v", err)
 	}
-	if len(facts) != 2 {
-		t.Fatalf("expected 2 own unique facts, got %d: %+v", len(facts), facts)
+	if len(facts) != 3 {
+		t.Fatalf("expected 3 own unique facts, got %d: %+v", len(facts), facts)
 	}
-	if facts[0].Fact != "новый факт" || facts[1].Fact != "старый факт" {
-		t.Fatalf("facts are missing or not newest-first: %+v", facts)
-	}
-
-	limited, err := app.LoadGeminiUserFactsByNames(db, chatID, []string{"Денис", "denis1011101"}, 1)
-	if err != nil || len(limited) != 1 || limited[0].Fact != "новый факт" {
-		t.Fatalf("limit was not respected: %+v, err: %v", limited, err)
+	for _, fact := range facts {
+		if fact.Fact == "чужой пользователь" || fact.Fact == "чужой чат" {
+			t.Fatalf("unrelated fact leaked into results: %+v", facts)
+		}
 	}
 }
 
