@@ -371,7 +371,7 @@ func (a *GeminiAgent) respond(m tgbotapi.Message) error {
 	}
 
 	if a.bot == nil {
-		saveGeminiArtifacts(a.db, m.Chat.ID, userRole, userText, reply, factsToSave, a.now())
+		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, factsToSave, a.now())
 		return nil
 	}
 
@@ -379,7 +379,7 @@ func (a *GeminiAgent) respond(m tgbotapi.Message) error {
 	msg.ReplyToMessageID = m.MessageID
 	_, sendErr := a.bot.Send(msg)
 	if sendErr == nil {
-		saveGeminiArtifacts(a.db, m.Chat.ID, userRole, userText, reply, factsToSave, a.now())
+		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, factsToSave, a.now())
 		a.maybeRunAutoCommand(m, autoCommand)
 	}
 	return sendErr
@@ -394,10 +394,11 @@ func saveMemoryPair(db *sql.DB, chatID int64, userRole, userText, reply string, 
 	}
 }
 
-func saveGeminiArtifacts(db *sql.DB, chatID int64, userRole, userText, reply string, facts []GeminiUserFact, now time.Time) {
+func saveGeminiArtifacts(db *sql.DB, chatID int64, author *tgbotapi.User, userRole, userText, reply string, facts []GeminiUserFact, now time.Time) {
 	saveMemoryPair(db, chatID, userRole, userText, reply, now)
 	for _, fact := range facts {
-		if err := SaveGeminiUserFact(db, chatID, fact.UserName, fact.Fact, now); err != nil {
+		userID := ResolveGeminiFactUserID(db, chatID, fact.UserName, author)
+		if err := SaveGeminiUserFact(db, chatID, userID, fact.UserName, fact.Fact, now); err != nil {
 			log.Printf("GeminiAgent.respond: save user fact error: %v", err)
 		}
 	}

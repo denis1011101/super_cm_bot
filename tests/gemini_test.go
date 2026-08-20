@@ -528,16 +528,16 @@ func TestSaveAndLoadGeminiUserFacts(t *testing.T) {
 	chatID := int64(333)
 	now := time.Now()
 
-	if err := app.SaveGeminiUserFact(db, chatID, "Denis", "сдал экзамен по Go", now.Add(-2*time.Hour)); err != nil {
+	if err := app.SaveGeminiUserFact(db, chatID, 101, "Denis", "сдал экзамен по Go", now.Add(-2*time.Hour)); err != nil {
 		t.Fatalf("save fact 1: %v", err)
 	}
-	if err := app.SaveGeminiUserFact(db, chatID, "Дима", "фанат заднего привода", now.Add(-time.Hour)); err != nil {
+	if err := app.SaveGeminiUserFact(db, chatID, 102, "Дима", "фанат заднего привода", now.Add(-time.Hour)); err != nil {
 		t.Fatalf("save fact 2: %v", err)
 	}
-	if err := app.SaveGeminiUserFact(db, chatID, "Denis", "сдал экзамен по Go", now); err != nil {
+	if err := app.SaveGeminiUserFact(db, chatID, 101, "Denis", "сдал экзамен по Go", now); err != nil {
 		t.Fatalf("save duplicate fact: %v", err)
 	}
-	if err := app.SaveGeminiUserFact(db, chatID+1, "Other", "чужой факт", now); err != nil {
+	if err := app.SaveGeminiUserFact(db, chatID+1, 103, "Other", "чужой факт", now); err != nil {
 		t.Fatalf("save other chat fact: %v", err)
 	}
 

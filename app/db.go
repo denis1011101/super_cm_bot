@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -591,7 +592,13 @@ type GeminiUserFact struct {
 	Fact     string
 }
 
-func SaveGeminiUserFact(db *sql.DB, chatID int64, userName, fact string, createdAt time.Time) error {
+const maxGeminiUserFactsPerOwner = 30
+
+// SaveGeminiUserFact stores one fact about a chat member. userID is the
+// immutable Telegram ID of that member, or 0 when the name Gemini used could
+// not be resolved to exactly one member: such facts still feed the shared chat
+// context, but they never belong to anybody personally.
+func SaveGeminiUserFact(db *sql.DB, chatID, userID int64, userName, fact string, createdAt time.Time) error {
 	if db == nil {
 		return errors.New("db is nil")
 	}
@@ -601,12 +608,173 @@ func SaveGeminiUserFact(db *sql.DB, chatID int64, userName, fact string, created
 		return nil
 	}
 
-	_, err := db.Exec(
-		`INSERT OR IGNORE INTO gemini_user_facts (chat_id, user_name, fact, created_at)
-		VALUES (?, ?, ?, ?)`,
-		chatID, userName, fact, createdAt.UTC().Format(sqliteTimestampLayout),
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	// the same fact may already be stored without an owner: keep the row and
+	// attach the owner we know now
+	_, err = tx.Exec(
+		`INSERT INTO gemini_user_facts (chat_id, user_id, user_name, fact, created_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (chat_id, user_name, fact) DO UPDATE SET user_id = excluded.user_id
+		WHERE gemini_user_facts.user_id = 0 AND excluded.user_id <> 0`,
+		chatID, userID, userName, fact, createdAt.UTC().Format(sqliteTimestampLayout),
 	)
-	return err
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	if err := pruneGeminiUserFacts(tx, chatID, userID, userName, maxGeminiUserFactsPerOwner); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func pruneGeminiUserFacts(tx *sql.Tx, chatID, userID int64, userName string, limit int) error {
+	if limit <= 0 {
+		return nil
+	}
+
+	ids, err := geminiUserFactIDsToPrune(tx, chatID, userID, userName, limit)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec("DELETE FROM gemini_user_facts WHERE id = ?", id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// geminiUserFactIDsToPrune returns the facts of one owner beyond the keep
+// newest ones. Owned facts are grouped by Telegram ID, ownerless ones by name.
+func geminiUserFactIDsToPrune(tx *sql.Tx, chatID, userID int64, userName string, keep int) ([]int64, error) {
+	rows, err := tx.Query(
+		`SELECT id, user_name
+		FROM gemini_user_facts
+		WHERE chat_id = ? AND user_id = ?
+		ORDER BY created_at DESC, id DESC`,
+		chatID, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	wantedName := normalizeGeminiFactName(userName)
+	ids := make([]int64, 0)
+	matched := 0
+	for rows.Next() {
+		var (
+			id      int64
+			rowName string
+		)
+		if err := rows.Scan(&id, &rowName); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if userID == 0 && !strings.EqualFold(normalizeGeminiFactName(rowName), wantedName) {
+			continue
+		}
+		matched++
+		if matched > keep {
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// DeleteGeminiUserFactsForUser deletes the facts owned by one Telegram user in
+// one chat and returns the number of deleted rows.
+func DeleteGeminiUserFactsForUser(db *sql.DB, chatID, userID int64) (int64, error) {
+	if db == nil {
+		return 0, errors.New("db is nil")
+	}
+	if userID == 0 {
+		return 0, nil
+	}
+
+	result, err := db.Exec(
+		"DELETE FROM gemini_user_facts WHERE chat_id = ? AND user_id = ?",
+		chatID, userID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// ResolveGeminiFactUserID maps the name from a [SAVE: Name — fact] tag to an
+// immutable Telegram ID. The message author is matched by their own names
+// first, then the chat roster is searched by username. The result is 0 when the
+// name does not resolve to exactly one member, so mutable display names never
+// grant access to somebody else's facts.
+func ResolveGeminiFactUserID(db *sql.DB, chatID int64, factName string, author *tgbotapi.User) int64 {
+	factName = normalizeGeminiFactName(factName)
+	if factName == "" {
+		return 0
+	}
+
+	if author != nil && author.ID != 0 {
+		for _, alias := range GeminiUserAliases(author) {
+			if strings.EqualFold(factName, alias) {
+				return author.ID
+			}
+		}
+	}
+
+	if db == nil {
+		return 0
+	}
+	members, err := GetPenNames(db, chatID)
+	if err != nil {
+		log.Printf("ResolveGeminiFactUserID: load chat members error: %v", err)
+		return 0
+	}
+
+	var resolved int64
+	for _, member := range members {
+		if member.ID == 0 || !strings.EqualFold(normalizeGeminiFactName(member.Name), factName) {
+			continue
+		}
+		if resolved != 0 && resolved != member.ID {
+			return 0
+		}
+		resolved = member.ID
+	}
+	return resolved
+}
+
+// GeminiUserAliases lists the names Gemini may use for one user.
+func GeminiUserAliases(user *tgbotapi.User) []string {
+	if user == nil {
+		return nil
+	}
+
+	aliases := make([]string, 0, 3)
+	for _, alias := range []string{user.FirstName, user.UserName, strings.TrimSpace(user.FirstName + " " + user.LastName)} {
+		alias = normalizeGeminiFactName(alias)
+		if alias != "" {
+			aliases = append(aliases, alias)
+		}
+	}
+	return aliases
+}
+
+func normalizeGeminiFactName(userName string) string {
+	return strings.TrimPrefix(normalizeMemoryRole(userName, ""), "@")
 }
 
 func LoadRandomGeminiUserFacts(db *sql.DB, chatID int64, limit int) ([]GeminiUserFact, error) {
@@ -646,6 +814,55 @@ func LoadRandomGeminiUserFacts(db *sql.DB, chatID int64, limit int) ([]GeminiUse
 		return nil, err
 	}
 
+	return facts, nil
+}
+
+// LoadGeminiUserFactsForUser returns up to limit random facts owned by one
+// Telegram user in one chat.
+func LoadGeminiUserFactsForUser(db *sql.DB, chatID, userID int64, limit int) ([]GeminiUserFact, error) {
+	if db == nil {
+		return nil, errors.New("db is nil")
+	}
+	if limit <= 0 || userID == 0 {
+		return nil, nil
+	}
+
+	rows, err := db.Query(
+		`SELECT user_name, fact
+		FROM gemini_user_facts
+		WHERE chat_id = ? AND user_id = ?
+		ORDER BY RANDOM()`,
+		chatID, userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing gemini user facts rows: %v", closeErr)
+		}
+	}()
+
+	facts := make([]GeminiUserFact, 0, limit)
+	seenFacts := make(map[string]struct{}, limit)
+	for rows.Next() {
+		var fact GeminiUserFact
+		if err := rows.Scan(&fact.UserName, &fact.Fact); err != nil {
+			return nil, err
+		}
+		factKey := strings.ToLower(fact.Fact)
+		if _, exists := seenFacts[factKey]; exists {
+			continue
+		}
+		seenFacts[factKey] = struct{}{}
+		facts = append(facts, fact)
+		if len(facts) == limit {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return facts, nil
 }
 
