@@ -312,12 +312,11 @@ func (a *GeminiAgent) TryRespondImmediate(m tgbotapi.Message) bool {
 		return false
 	}
 
+	// отменяем отложенный ответ, но сохраняем кулдаун:
+	// иначе следующее обычное сообщение сразу запланирует ещё один ответ
 	if m.Chat != nil {
 		a.mu.Lock()
-		if a.pendingResponses[m.Chat.ID] != nil {
-			delete(a.pendingResponses, m.Chat.ID)
-			delete(a.geminiLast, m.Chat.ID)
-		}
+		delete(a.pendingResponses, m.Chat.ID)
 		a.mu.Unlock()
 	}
 

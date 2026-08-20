@@ -292,6 +292,72 @@ func TestGeminiAgentTryRespond_DebouncesAndCombinesMessages(t *testing.T) {
 	}
 }
 
+func TestGeminiAgentTryRespondImmediate_CancelsPendingButKeepsCooldown(t *testing.T) {
+	db := setupGeminiDB(t)
+	var requests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ"}]}}]}`))
+	}))
+	defer server.Close()
+
+	now := time.Now()
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Client:     server.Client(),
+		Now:        time.Now,
+		APIKey:     "test-key",
+		APIBaseURL: server.URL,
+		ResponseDelay: func() time.Duration {
+			return 50 * time.Millisecond
+		},
+	})
+
+	chatID := int64(100002)
+	user := &tgbotapi.User{ID: 7, FirstName: "Денис"}
+	scheduled := tgbotapi.Update{Message: &tgbotapi.Message{
+		MessageID: 1,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      user,
+		Text:      "обычное сообщение",
+		Date:      int(now.Unix()),
+	}}
+
+	if !agent.TryRespond(scheduled, chatID) {
+		t.Fatal("first message should schedule a response")
+	}
+
+	mention := tgbotapi.Message{
+		MessageID: 2,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      user,
+		Text:      "@my_bot привет",
+		Date:      int(now.Unix()),
+	}
+	if !agent.TryRespondImmediate(mention) {
+		t.Fatal("mention should trigger an immediate response")
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("expected only the immediate Gemini request, got %d", got)
+	}
+
+	next := tgbotapi.Update{Message: &tgbotapi.Message{
+		MessageID: 3,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      user,
+		Text:      "ещё одно обычное сообщение",
+		Date:      int(time.Now().Unix()),
+	}}
+	if agent.TryRespond(next, chatID) {
+		t.Fatal("cooldown should survive the canceled pending response")
+	}
+}
+
 func TestGeminiAgentTryRespond_GuardChecks(t *testing.T) {
 	db := setupGeminiDB(t)
 	agent := app.NewGeminiAgent(db, &tgbotapi.BotAPI{
