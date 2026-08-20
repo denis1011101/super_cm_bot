@@ -63,7 +63,7 @@ func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string,
 		return "", errors.New("user is nil")
 	}
 
-	facts, err := app.LoadGeminiUserFactsByNames(db, chatID, geminiUserAliases(user), myFactsLimit)
+	facts, err := app.LoadGeminiUserFactsForUser(db, chatID, user.ID, myFactsLimit)
 	if err != nil {
 		return "", err
 	}
@@ -98,13 +98,5 @@ func deleteMyFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error)
 	if user == nil {
 		return 0, errors.New("user is nil")
 	}
-	return app.DeleteGeminiUserFactsByNames(db, chatID, geminiUserAliases(user))
-}
-
-func geminiUserAliases(user *tgbotapi.User) []string {
-	aliases := []string{user.FirstName, user.UserName}
-	if user.FirstName != "" && user.LastName != "" {
-		aliases = append(aliases, user.FirstName+" "+user.LastName)
-	}
-	return aliases
+	return app.DeleteGeminiUserFactsForUser(db, chatID, user.ID)
 }

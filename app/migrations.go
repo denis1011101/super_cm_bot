@@ -51,6 +51,23 @@ var migrations = []Migration{
 				ON gemini_user_facts(chat_id, user_name, fact);
 			`,
 	},
+	{
+		ID:   4,
+		Name: "add_user_id_to_gemini_user_facts",
+		SQL: `
+			ALTER TABLE gemini_user_facts ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0;
+			CREATE INDEX IF NOT EXISTS idx_gemini_user_facts_chat_user_id
+				ON gemini_user_facts(chat_id, user_id);
+			UPDATE gemini_user_facts
+			SET user_id = COALESCE((
+				SELECT pens.tg_pen_id
+				FROM pens
+				WHERE pens.tg_chat_id = gemini_user_facts.chat_id
+					AND pens.pen_name IS NOT NULL
+					AND lower(trim(pens.pen_name, ' @')) = lower(trim(gemini_user_facts.user_name, ' @'))
+			), 0);
+			`,
+	},
 }
 
 // RunMigrations выполняет миграции, которые еще не были применены
