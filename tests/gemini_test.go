@@ -2,8 +2,11 @@ package tests
 
 import (
 	"database/sql"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	_ "unsafe"
@@ -28,6 +31,9 @@ func extractGeminiSaveFacts(raw string) (string, []app.GeminiUserFact)
 
 //go:linkname extractGeminiAutoCommand github.com/denis1011101/super_cm_bot/app.extractGeminiAutoCommand
 func extractGeminiAutoCommand(raw string) (string, string)
+
+//go:linkname randomGeminiResponseDelay github.com/denis1011101/super_cm_bot/app.randomGeminiResponseDelay
+func randomGeminiResponseDelay() time.Duration
 
 func setupGeminiDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -204,6 +210,151 @@ func TestGeminiAgentTryRespond_SetsRandomCooldown(t *testing.T) {
 	}
 	if agent.TryRespond(upd, chatID) {
 		t.Fatalf("expected second TryRespond call to be blocked by cooldown")
+	}
+}
+
+func TestRandomGeminiResponseDelayRange(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		delay := randomGeminiResponseDelay()
+		if delay < 2*time.Second || delay > 4*time.Second {
+			t.Fatalf("delay %v is outside 2-4 second range", delay)
+		}
+	}
+}
+
+func TestGeminiAgentTryRespond_DebouncesAndCombinesMessages(t *testing.T) {
+	db := setupGeminiDB(t)
+	var requests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ"}]}}]}`))
+	}))
+	defer server.Close()
+
+	now := time.Now()
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Client:     server.Client(),
+		Now:        time.Now,
+		APIKey:     "test-key",
+		APIBaseURL: server.URL,
+		ResponseDelay: func() time.Duration {
+			return 40 * time.Millisecond
+		},
+	})
+
+	chatID := int64(100001)
+	user := &tgbotapi.User{ID: 42, FirstName: "Денис"}
+	first := tgbotapi.Update{Message: &tgbotapi.Message{
+		MessageID: 1,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      user,
+		Text:      "первая часть",
+		Date:      int(now.Unix()),
+	}}
+	second := tgbotapi.Update{Message: &tgbotapi.Message{
+		MessageID: 2,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      user,
+		Text:      "вторая часть",
+		Date:      int(now.Unix()),
+	}}
+
+	if !agent.TryRespond(first, chatID) {
+		t.Fatal("first message should schedule a response")
+	}
+	time.Sleep(10 * time.Millisecond)
+	if !agent.TryRespond(second, chatID) {
+		t.Fatal("second message should update the pending response")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var savedText string
+	for time.Now().Before(deadline) {
+		err := db.QueryRow(
+			"SELECT content FROM gemini_memories WHERE chat_id = ? AND role = ?",
+			chatID,
+			"Денис",
+		).Scan(&savedText)
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if savedText != "первая часть\nвторая часть" {
+		t.Fatalf("saved prompt: got %q", savedText)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("expected one Gemini request, got %d", requests.Load())
+	}
+}
+
+func TestGeminiAgentTryRespondImmediate_CancelsPendingButKeepsCooldown(t *testing.T) {
+	db := setupGeminiDB(t)
+	var requests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ"}]}}]}`))
+	}))
+	defer server.Close()
+
+	now := time.Now()
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Client:     server.Client(),
+		Now:        time.Now,
+		APIKey:     "test-key",
+		APIBaseURL: server.URL,
+		ResponseDelay: func() time.Duration {
+			return 50 * time.Millisecond
+		},
+	})
+
+	chatID := int64(100002)
+	user := &tgbotapi.User{ID: 7, FirstName: "Денис"}
+	scheduled := tgbotapi.Update{Message: &tgbotapi.Message{
+		MessageID: 1,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      user,
+		Text:      "обычное сообщение",
+		Date:      int(now.Unix()),
+	}}
+
+	if !agent.TryRespond(scheduled, chatID) {
+		t.Fatal("first message should schedule a response")
+	}
+
+	mention := tgbotapi.Message{
+		MessageID: 2,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      user,
+		Text:      "@my_bot привет",
+		Date:      int(now.Unix()),
+	}
+	if !agent.TryRespondImmediate(mention) {
+		t.Fatal("mention should trigger an immediate response")
+	}
+
+	time.Sleep(300 * time.Millisecond)
+
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("expected only the immediate Gemini request, got %d", got)
+	}
+
+	next := tgbotapi.Update{Message: &tgbotapi.Message{
+		MessageID: 3,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      user,
+		Text:      "ещё одно обычное сообщение",
+		Date:      int(time.Now().Unix()),
+	}}
+	if agent.TryRespond(next, chatID) {
+		t.Fatal("cooldown should survive the canceled pending response")
 	}
 }
 
