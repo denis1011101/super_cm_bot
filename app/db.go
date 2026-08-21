@@ -666,7 +666,7 @@ func geminiUserFactIDsToPrune(tx *sql.Tx, chatID, userID int64, userName string,
 		return nil, err
 	}
 
-	wantedName := normalizeGeminiFactName(userName)
+	wantedName := NormalizePersonName(userName)
 	ids := make([]int64, 0)
 	matched := 0
 	for rows.Next() {
@@ -678,7 +678,7 @@ func geminiUserFactIDsToPrune(tx *sql.Tx, chatID, userID int64, userName string,
 			_ = rows.Close()
 			return nil, err
 		}
-		if userID == 0 && !strings.EqualFold(normalizeGeminiFactName(rowName), wantedName) {
+		if userID == 0 && NormalizePersonName(rowName) != wantedName {
 			continue
 		}
 		matched++
@@ -716,37 +716,113 @@ func DeleteGeminiUserFactsForUser(db *sql.DB, chatID, userID int64) (int64, erro
 	return result.RowsAffected()
 }
 
+// ChatMember is one person seen in a chat, with the names they can be called by.
+type ChatMember struct {
+	ID        int64
+	FirstName string
+	LastName  string
+	UserName  string
+}
+
+// NameKeys returns the normalized names this member answers to.
+func (m ChatMember) NameKeys() []string {
+	return PersonNameKeys(m.FirstName, m.LastName, m.UserName)
+}
+
+// RememberChatMember refreshes the chat roster from an incoming message, so
+// facts told about somebody in the third person can later be matched to a
+// telegram ID by name.
+func RememberChatMember(db *sql.DB, chatID int64, user *tgbotapi.User) {
+	if db == nil || user == nil || user.ID == 0 || user.IsBot {
+		return
+	}
+
+	_, err := db.Exec(
+		`INSERT INTO chat_members (chat_id, user_id, first_name, last_name, user_name, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (chat_id, user_id) DO UPDATE SET
+			first_name = excluded.first_name,
+			last_name = excluded.last_name,
+			user_name = excluded.user_name,
+			updated_at = excluded.updated_at`,
+		chatID, user.ID, user.FirstName, user.LastName, user.UserName,
+		time.Now().UTC().Format(sqliteTimestampLayout),
+	)
+	if err != nil {
+		log.Printf("RememberChatMember: %v", err)
+	}
+}
+
+// LoadChatMembers returns everybody known in one chat.
+func LoadChatMembers(db *sql.DB, chatID int64) ([]ChatMember, error) {
+	if db == nil {
+		return nil, errors.New("db is nil")
+	}
+
+	rows, err := db.Query(
+		"SELECT user_id, first_name, last_name, user_name FROM chat_members WHERE chat_id = ?",
+		chatID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Printf("Error closing chat members rows: %v", closeErr)
+		}
+	}()
+
+	members := make([]ChatMember, 0)
+	for rows.Next() {
+		var member ChatMember
+		if err := rows.Scan(&member.ID, &member.FirstName, &member.LastName, &member.UserName); err != nil {
+			return nil, err
+		}
+		members = append(members, member)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
 // ResolveGeminiFactUserID maps the name from a [SAVE: Name — fact] tag to an
-// immutable Telegram ID. The message author is matched by their own names
-// first, then the chat roster is searched by username. The result is 0 when the
-// name does not resolve to exactly one member, so mutable display names never
-// grant access to somebody else's facts.
+// immutable Telegram ID. The author of the message is matched first, then the
+// chat roster: that is how facts told about somebody else get an owner too.
+// Names are compared by their normalized form, so "Дима", "Dimon" and
+// "Dmitriy" all reach the same person. The result is 0 when the name does not
+// resolve to exactly one member, so a name two people share never grants
+// access to the facts of either.
 func ResolveGeminiFactUserID(db *sql.DB, chatID int64, factName string, author *tgbotapi.User) int64 {
-	factName = normalizeGeminiFactName(factName)
-	if factName == "" {
+	factKey := NormalizePersonName(factName)
+	if factKey == "" {
 		return 0
 	}
 
-	if author != nil && author.ID != 0 {
-		for _, alias := range GeminiUserAliases(author) {
-			if strings.EqualFold(factName, alias) {
-				return author.ID
-			}
-		}
+	if author != nil && author.ID != 0 && containsString(PersonNameKeys(author.FirstName, author.LastName, author.UserName), factKey) {
+		return author.ID
 	}
 
 	if db == nil {
 		return 0
 	}
-	members, err := GetPenNames(db, chatID)
+	members, err := LoadChatMembers(db, chatID)
 	if err != nil {
 		log.Printf("ResolveGeminiFactUserID: load chat members error: %v", err)
 		return 0
 	}
 
+	return singleMemberByNameKey(members, factKey, 0)
+}
+
+// singleMemberByNameKey returns the only member known by the given name, or 0
+// when nobody or more than one person answers to it. selfID is the member the
+// name is being resolved for: a namesake makes the name ambiguous, the person
+// themselves does not.
+func singleMemberByNameKey(members []ChatMember, nameKey string, selfID int64) int64 {
 	var resolved int64
 	for _, member := range members {
-		if member.ID == 0 || !strings.EqualFold(normalizeGeminiFactName(member.Name), factName) {
+		if member.ID == 0 || !containsString(member.NameKeys(), nameKey) {
 			continue
 		}
 		if resolved != 0 && resolved != member.ID {
@@ -754,27 +830,82 @@ func ResolveGeminiFactUserID(db *sql.DB, chatID int64, factName string, author *
 		}
 		resolved = member.ID
 	}
+	if selfID != 0 && resolved != 0 && resolved != selfID {
+		return 0
+	}
 	return resolved
 }
 
-// GeminiUserAliases lists the names Gemini may use for one user.
-func GeminiUserAliases(user *tgbotapi.User) []string {
-	if user == nil {
-		return nil
+// ClaimOwnerlessGeminiUserFacts binds the facts saved before owners were
+// recorded to the user they are about, and returns how many were claimed. A
+// fact is claimed only when its name belongs to this user alone: while another
+// member of the chat answers to the same name, it stays ownerless.
+func ClaimOwnerlessGeminiUserFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
+	if db == nil {
+		return 0, errors.New("db is nil")
+	}
+	if user == nil || user.ID == 0 {
+		return 0, nil
 	}
 
-	aliases := make([]string, 0, 3)
-	for _, alias := range []string{user.FirstName, user.UserName, strings.TrimSpace(user.FirstName + " " + user.LastName)} {
-		alias = normalizeGeminiFactName(alias)
-		if alias != "" {
-			aliases = append(aliases, alias)
+	ownKeys := PersonNameKeys(user.FirstName, user.LastName, user.UserName)
+	if len(ownKeys) == 0 {
+		return 0, nil
+	}
+
+	members, err := LoadChatMembers(db, chatID)
+	if err != nil {
+		return 0, err
+	}
+
+	rows, err := db.Query(
+		"SELECT DISTINCT user_name FROM gemini_user_facts WHERE chat_id = ? AND user_id = 0",
+		chatID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	ownerless := make([]string, 0)
+	for rows.Next() {
+		var userName string
+		if err := rows.Scan(&userName); err != nil {
+			_ = rows.Close()
+			return 0, err
 		}
+		ownerless = append(ownerless, userName)
 	}
-	return aliases
-}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
 
-func normalizeGeminiFactName(userName string) string {
-	return strings.TrimPrefix(normalizeMemoryRole(userName, ""), "@")
+	var claimed int64
+	for _, userName := range ownerless {
+		nameKey := NormalizePersonName(userName)
+		if !containsString(ownKeys, nameKey) {
+			continue
+		}
+		if singleMemberByNameKey(members, nameKey, user.ID) == 0 {
+			continue
+		}
+
+		result, err := db.Exec(
+			"UPDATE gemini_user_facts SET user_id = ? WHERE chat_id = ? AND user_id = 0 AND user_name = ?",
+			user.ID, chatID, userName,
+		)
+		if err != nil {
+			return claimed, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return claimed, err
+		}
+		claimed += affected
+	}
+	return claimed, nil
 }
 
 func LoadRandomGeminiUserFacts(db *sql.DB, chatID int64, limit int) ([]GeminiUserFact, error) {

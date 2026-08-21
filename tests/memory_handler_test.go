@@ -235,29 +235,108 @@ func TestResolveGeminiFactUserID(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(777)
 	author := &tgbotapi.User{ID: 1, FirstName: "Денис", LastName: "Иванов", UserName: "denis1011101"}
+	dmitri := &tgbotapi.User{ID: 2, FirstName: "Дмитрий", UserName: "dima_t"}
 
-	if _, err := db.Exec(
-		`INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count, pen_last_update_at, is_active)
-		VALUES (?, ?, ?, 0, 0, 0, CURRENT_TIMESTAMP, TRUE)`,
-		"dima", 2, chatID,
-	); err != nil {
-		t.Fatalf("insert chat member: %v", err)
-	}
+	app.RememberChatMember(db, chatID, author)
+	app.RememberChatMember(db, chatID, dmitri)
 
 	cases := []struct {
 		name string
 		want int64
 	}{
 		{"Денис", 1},
+		{"Denis", 1},
 		{"ДЕНИС ИВАНОВ", 1},
 		{"@denis1011101", 1},
-		{"@dima", 2},
-		{"Дима", 0},
+		{"Дмитрий", 2},
+		{"Дима", 2},
+		{"Димон", 2},
+		{"Андрей", 0},
 		{"", 0},
 	}
 	for _, testCase := range cases {
 		if got := app.ResolveGeminiFactUserID(db, chatID, testCase.name, author); got != testCase.want {
-			t.Fatalf("resolve %q: expected %d, got %d", testCase.name, testCase.want, got)
+			t.Errorf("resolve %q: expected %d, got %d", testCase.name, testCase.want, got)
 		}
+	}
+}
+
+func TestResolveGeminiFactUserIDLeavesNamesakesUnresolved(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(778)
+	author := &tgbotapi.User{ID: 5, FirstName: "Юрий", UserName: "yrcnbt"}
+
+	app.RememberChatMember(db, chatID, &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"})
+	app.RememberChatMember(db, chatID, &tgbotapi.User{ID: 2, FirstName: "Denis", UserName: "denis_two"})
+	app.RememberChatMember(db, chatID, author)
+
+	if got := app.ResolveGeminiFactUserID(db, chatID, "Денис", author); got != 0 {
+		t.Fatalf("a name shared by two members must stay unresolved, got %d", got)
+	}
+	if got := app.ResolveGeminiFactUserID(db, chatID, "Юра", author); got != 5 {
+		t.Fatalf("the author must still be resolved by a diminutive, got %d", got)
+	}
+}
+
+func TestClaimOwnerlessFactsOnMyFacts(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(779)
+	user := &tgbotapi.User{ID: 1, FirstName: "Denis", UserName: "denis1011101"}
+	app.RememberChatMember(db, chatID, user)
+
+	for i, userName := range []string{"Denis", "Денис", "Дима"} {
+		if err := app.SaveGeminiUserFact(db, chatID, 0, userName, fmt.Sprintf("старый факт-%d", i), time.Now()); err != nil {
+			t.Fatalf("save legacy fact: %v", err)
+		}
+	}
+
+	message, err := buildMyFactsMessage(db, chatID, user)
+	if err != nil {
+		t.Fatalf("build message: %v", err)
+	}
+	if !strings.Contains(message, "старый факт-0") || !strings.Contains(message, "старый факт-1") {
+		t.Fatalf("legacy facts of the user were not claimed: %q", message)
+	}
+	if strings.Contains(message, "старый факт-2") {
+		t.Fatalf("a fact about somebody else was claimed: %q", message)
+	}
+
+	var claimed int
+	if err := db.QueryRow(
+		"SELECT COUNT(*) FROM gemini_user_facts WHERE chat_id = ? AND user_id = ?",
+		chatID, user.ID,
+	).Scan(&claimed); err != nil {
+		t.Fatalf("count claimed facts: %v", err)
+	}
+	if claimed != 2 {
+		t.Fatalf("expected 2 claimed facts, got %d", claimed)
+	}
+}
+
+func TestClaimOwnerlessFactsSkipsNamesakes(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(780)
+	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+	app.RememberChatMember(db, chatID, user)
+	app.RememberChatMember(db, chatID, &tgbotapi.User{ID: 2, FirstName: "Denis", UserName: "denis_two"})
+
+	if err := app.SaveGeminiUserFact(db, chatID, 0, "Денис", "чей-то факт", time.Now()); err != nil {
+		t.Fatalf("save legacy fact: %v", err)
+	}
+
+	claimed, err := app.ClaimOwnerlessGeminiUserFacts(db, chatID, user)
+	if err != nil {
+		t.Fatalf("claim facts: %v", err)
+	}
+	if claimed != 0 {
+		t.Fatalf("a fact under a shared name must stay ownerless, claimed %d", claimed)
+	}
+
+	message, err := buildMyFactsMessage(db, chatID, user)
+	if err != nil {
+		t.Fatalf("build message: %v", err)
+	}
+	if message != "ИИ пока ничего о тебе не запомнил." {
+		t.Fatalf("unexpected message: %q", message)
 	}
 }

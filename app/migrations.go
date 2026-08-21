@@ -68,6 +68,25 @@ var migrations = []Migration{
 			), 0);
 			`,
 	},
+	{
+		ID:   5,
+		Name: "create_chat_members_table",
+		SQL: `
+			CREATE TABLE IF NOT EXISTS chat_members (
+				chat_id INTEGER NOT NULL,
+				user_id INTEGER NOT NULL,
+				first_name TEXT NOT NULL DEFAULT '',
+				last_name TEXT NOT NULL DEFAULT '',
+				user_name TEXT NOT NULL DEFAULT '',
+				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (chat_id, user_id)
+			);
+			INSERT OR IGNORE INTO chat_members (chat_id, user_id, user_name)
+			SELECT tg_chat_id, tg_pen_id, COALESCE(pen_name, '')
+			FROM pens
+			WHERE tg_chat_id IS NOT NULL AND tg_pen_id IS NOT NULL;
+			`,
+	},
 }
 
 // RunMigrations выполняет миграции, которые еще не были применены

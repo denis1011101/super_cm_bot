@@ -63,6 +63,12 @@ func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string,
 		return "", errors.New("user is nil")
 	}
 
+	if claimed, err := app.ClaimOwnerlessGeminiUserFacts(db, chatID, user); err != nil {
+		log.Printf("buildMyFactsMessage: claim ownerless facts: %v", err)
+	} else if claimed > 0 {
+		log.Printf("buildMyFactsMessage: claimed %d ownerless facts for user %d", claimed, user.ID)
+	}
+
 	facts, err := app.LoadGeminiUserFactsForUser(db, chatID, user.ID, myFactsLimit)
 	if err != nil {
 		return "", err
@@ -97,6 +103,9 @@ func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string,
 func deleteMyFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
 	if user == nil {
 		return 0, errors.New("user is nil")
+	}
+	if _, err := app.ClaimOwnerlessGeminiUserFacts(db, chatID, user); err != nil {
+		log.Printf("deleteMyFacts: claim ownerless facts: %v", err)
 	}
 	return app.DeleteGeminiUserFactsForUser(db, chatID, user.ID)
 }

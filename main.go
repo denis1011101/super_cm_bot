@@ -178,6 +178,10 @@ func main() {
 		if update.Message != nil {
 			chatID := update.Message.Chat.ID
 			if chatID == specificChatID {
+				// Актуализируем список участников: по нему факты ИИ
+				// связываются с людьми, даже если о них пишут в третьем лице
+				app.RememberChatMember(db, chatID, update.Message.From)
+
 				// Обработка команд
 				if handler, exists := commandHandlers[update.Message.Text]; exists {
 					handler(update, bot, db)
