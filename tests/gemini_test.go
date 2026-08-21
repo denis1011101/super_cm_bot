@@ -597,3 +597,150 @@ func TestGoogleSearchAdapter(t *testing.T) {
 		t.Fatalf("expected google_search tool to be set (Gemini 2.x format)")
 	}
 }
+
+// waitForGeminiReply waits until the agent stores the assistant answer.
+func waitForGeminiReply(t *testing.T, db *sql.DB, chatID int64) string {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var reply string
+		err := db.QueryRow(
+			"SELECT content FROM gemini_memories WHERE chat_id = ? AND role = ?",
+			chatID,
+			"bot",
+		).Scan(&reply)
+		if err == nil {
+			return reply
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return ""
+}
+
+func geminiTestMessage(chatID int64) tgbotapi.Message {
+	return tgbotapi.Message{
+		MessageID: 1,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      &tgbotapi.User{ID: 42, FirstName: "Денис"},
+		Text:      "как дела?",
+		Date:      int(time.Now().Unix()),
+	}
+}
+
+func TestGeminiAgentRetriesOverloadedModel(t *testing.T) {
+	db := setupGeminiDB(t)
+	var requests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if requests.Add(1) < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:          db,
+		Client:      server.Client(),
+		APIKey:      "test-key",
+		APIBaseURL:  server.URL,
+		MaxAttempts: 3,
+		RetryDelay:  func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100010)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ" {
+		t.Fatalf("expected the answer of the third attempt, got %q", reply)
+	}
+	if requests.Load() != 3 {
+		t.Fatalf("expected 3 attempts, got %d", requests.Load())
+	}
+}
+
+func TestGeminiAgentFallsBackToAnotherModel(t *testing.T) {
+	db := setupGeminiDB(t)
+	var primaryRequests, fallbackRequests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "gemini-3.7-flash") {
+			primaryRequests.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
+			return
+		}
+		fallbackRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"запасной ответ"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:            db,
+		Client:        server.Client(),
+		APIKey:        "test-key",
+		APIBaseURL:    server.URL,
+		Model:         "gemini-3.7-flash",
+		FallbackModel: "gemini-3.5-flash",
+		MaxAttempts:   2,
+		RetryDelay:    func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100011)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "запасной ответ" {
+		t.Fatalf("expected the fallback model answer, got %q", reply)
+	}
+	if primaryRequests.Load() != 2 {
+		t.Fatalf("expected 2 attempts on the configured model, got %d", primaryRequests.Load())
+	}
+	if fallbackRequests.Load() != 1 {
+		t.Fatalf("expected 1 request to the fallback model, got %d", fallbackRequests.Load())
+	}
+}
+
+func TestGeminiAgentDoesNotRetryClientErrors(t *testing.T) {
+	db := setupGeminiDB(t)
+	var requests atomic.Int32
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":400,"status":"INVALID_ARGUMENT"}}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:            db,
+		Client:        server.Client(),
+		APIKey:        "test-key",
+		APIBaseURL:    server.URL,
+		Model:         "gemini-3.7-flash",
+		FallbackModel: "gemini-3.5-flash",
+		MaxAttempts:   3,
+		RetryDelay:    func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100012)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if requests.Load() != 1 {
+		t.Fatalf("a 400 must not be retried, got %d requests", requests.Load())
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "" {
+		t.Fatalf("no answer should be stored, got %q", reply)
+	}
+}

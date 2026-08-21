@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	rand "math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"regexp"
@@ -30,6 +31,8 @@ const (
 	geminiAutoCmdGap   = 2 * time.Hour
 	geminiDelayMin     = 2 * time.Second
 	geminiDelayRange   = 2 * time.Second
+	geminiMaxAttempts  = 3
+	geminiRetryBackoff = time.Second
 )
 
 type SearchAdapter interface {
@@ -55,12 +58,15 @@ type GeminiAgentConfig struct {
 	Now                func() time.Time
 	Search             SearchAdapter
 	Model              string
+	FallbackModel      string
 	APIKey             string
 	APIBaseURL         string
 	MemoryWindow       time.Duration
 	MemoryLimit        int
 	AutoCommandHandler GeminiAutoCommandHandler
 	ResponseDelay      func() time.Duration
+	MaxAttempts        int
+	RetryDelay         func(attempt int) time.Duration
 }
 
 func (GeminiGoogleSearchAdapter) ShouldSearch(userText string) bool {
@@ -108,12 +114,15 @@ type GeminiAgent struct {
 	now           func() time.Time
 	search        SearchAdapter
 	model         string
+	fallbackModel string
 	apiKey        string
 	apiBaseURL    string
 	memoryWindow  time.Duration
 	memoryLimit   int
 	autoCommand   GeminiAutoCommandHandler
 	responseDelay func() time.Duration
+	maxAttempts   int
+	retryDelay    func(attempt int) time.Duration
 
 	mu               sync.Mutex
 	geminiLast       map[int64]time.Time
@@ -123,10 +132,11 @@ type GeminiAgent struct {
 
 func NewGeminiAgent(db *sql.DB, bot *tgbotapi.BotAPI) *GeminiAgent {
 	return NewGeminiAgentWithConfig(GeminiAgentConfig{
-		DB:     db,
-		Bot:    bot,
-		Model:  os.Getenv("GEMINI_MODEL"),
-		APIKey: os.Getenv("GEMINI_API_KEY"),
+		DB:            db,
+		Bot:           bot,
+		Model:         os.Getenv("GEMINI_MODEL"),
+		FallbackModel: os.Getenv("GEMINI_FALLBACK_MODEL"),
+		APIKey:        os.Getenv("GEMINI_API_KEY"),
 	})
 }
 
@@ -163,6 +173,18 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 	if responseDelay == nil {
 		responseDelay = randomGeminiResponseDelay
 	}
+	fallbackModel := normalizeGeminiModel(cfg.FallbackModel)
+	if fallbackModel == model {
+		fallbackModel = ""
+	}
+	maxAttempts := cfg.MaxAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = geminiMaxAttempts
+	}
+	retryDelay := cfg.RetryDelay
+	if retryDelay == nil {
+		retryDelay = defaultGeminiRetryDelay
+	}
 
 	return &GeminiAgent{
 		db:               cfg.DB,
@@ -171,12 +193,15 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 		now:              nowFn,
 		search:           search,
 		model:            model,
+		fallbackModel:    fallbackModel,
 		apiKey:           cfg.APIKey,
 		apiBaseURL:       apiBaseURL,
 		memoryWindow:     memoryWindow,
 		memoryLimit:      memoryLimit,
 		autoCommand:      cfg.AutoCommandHandler,
 		responseDelay:    responseDelay,
+		maxAttempts:      maxAttempts,
+		retryDelay:       retryDelay,
 		geminiLast:       make(map[int64]time.Time),
 		autoCommandLast:  make(map[int64]time.Time),
 		pendingResponses: make(map[int64]*pendingGeminiResponse),
@@ -667,16 +692,112 @@ func (a *GeminiAgent) callLLM(ctx context.Context, systemPrompt, userPrompt, sea
 	}
 
 	reqData.Tools = nil
-	return a.executeGenerateContent(ctx, reqData)
+	return a.generateContentWithFallback(ctx, reqData)
+}
+
+// generateContentWithFallback retries transient Google failures (503 and
+// friends) and, when the configured model stays unavailable, repeats the
+// request on the fallback model.
+func (a *GeminiAgent) generateContentWithFallback(ctx context.Context, reqData GeminiRequest) (string, error) {
+	models := []string{a.model}
+	if a.fallbackModel != "" {
+		models = append(models, a.fallbackModel)
+	}
+
+	var lastErr error
+	for _, model := range models {
+		for attempt := 0; attempt < a.maxAttempts; attempt++ {
+			reply, err := a.executeGenerateContentWithModel(ctx, model, reqData)
+			if err == nil {
+				if model != a.model {
+					log.Printf("GeminiAgent.callLLM: answered by fallback model %s", model)
+				}
+				return reply, nil
+			}
+			lastErr = err
+			if !isRetryableGeminiError(err) {
+				return "", err
+			}
+			log.Printf("GeminiAgent.callLLM: %s attempt %d/%d failed: %v", model, attempt+1, a.maxAttempts, err)
+			if attempt == a.maxAttempts-1 {
+				break
+			}
+			if err := sleepWithContext(ctx, a.retryDelay(attempt)); err != nil {
+				return "", err
+			}
+		}
+	}
+	return "", lastErr
+}
+
+func defaultGeminiRetryDelay(attempt int) time.Duration {
+	return geminiRetryBackoff << attempt
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// geminiAPIError is a non-200 answer from the Google API.
+type geminiAPIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *geminiAPIError) Error() string {
+	return fmt.Sprintf("google API error (status %d): %s", e.StatusCode, e.Body)
+}
+
+// isRetryableGeminiError reports whether repeating the same request may help:
+// overload and other temporary server-side failures, plus network hiccups.
+func isRetryableGeminiError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	var apiErr *geminiAPIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusTooManyRequests,
+			http.StatusInternalServerError,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+			http.StatusGatewayTimeout:
+			return true
+		default:
+			return false
+		}
+	}
+
+	// transport level failures: timeouts, resets, DNS
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 func (a *GeminiAgent) executeGenerateContent(ctx context.Context, reqData GeminiRequest) (string, error) {
+	return a.executeGenerateContentWithModel(ctx, a.model, reqData)
+}
+
+func (a *GeminiAgent) executeGenerateContentWithModel(ctx context.Context, model string, reqData GeminiRequest) (string, error) {
 	bContent, err := json.Marshal(reqData)
 	if err != nil {
 		return "", fmt.Errorf("marshal gemini request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", a.generateContentURL(), bytes.NewReader(bContent))
+	req, err := http.NewRequestWithContext(ctx, "POST", a.generateContentURL(model), bytes.NewReader(bContent))
 	if err != nil {
 		return "", fmt.Errorf("build gemini request: %w", err)
 	}
@@ -697,7 +818,7 @@ func (a *GeminiAgent) executeGenerateContent(ctx context.Context, reqData Gemini
 		return "", fmt.Errorf("read gemini response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("google API error (status %d): %s", resp.StatusCode, string(body))
+		return "", &geminiAPIError{StatusCode: resp.StatusCode, Body: string(body)}
 	}
 
 	var gr GeminiResponse
@@ -712,8 +833,8 @@ func (a *GeminiAgent) executeGenerateContent(ctx context.Context, reqData Gemini
 	return "", errors.New("empty response from Gemini")
 }
 
-func (a *GeminiAgent) generateContentURL() string {
-	return a.apiBaseURL + "/v1beta/models/" + a.model + ":generateContent?key=" + a.apiKey
+func (a *GeminiAgent) generateContentURL(model string) string {
+	return a.apiBaseURL + "/v1beta/models/" + model + ":generateContent?key=" + a.apiKey
 }
 
 func normalizeGeminiModel(model string) string {
