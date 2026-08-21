@@ -226,7 +226,7 @@ func TestBuildMyFactsMessageWhenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build empty message: %v", err)
 	}
-	if message != "ИИ пока ничего о тебе не запомнил." {
+	if message != "Пенис-ИИ пока ничего о тебе не запомнил." {
 		t.Fatalf("unexpected empty message: %q", message)
 	}
 }
@@ -336,7 +336,50 @@ func TestClaimOwnerlessFactsSkipsNamesakes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build message: %v", err)
 	}
-	if message != "ИИ пока ничего о тебе не запомнил." {
+	if message != "Пенис-ИИ пока ничего о тебе не запомнил." {
 		t.Fatalf("unexpected message: %q", message)
+	}
+}
+
+func TestBuildMyFactsMessageMentionsSampling(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(781)
+	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+
+	for i := 0; i < 7; i++ {
+		if err := app.SaveGeminiUserFact(db, chatID, user.ID, "Денис", fmt.Sprintf("факт-%d", i), time.Now()); err != nil {
+			t.Fatalf("save fact: %v", err)
+		}
+	}
+
+	message, err := buildMyFactsMessage(db, chatID, user)
+	if err != nil {
+		t.Fatalf("build message: %v", err)
+	}
+	if !strings.HasPrefix(message, "Вот 3 случайных факта из 7, что пенис-ИИ о тебе помнит:") {
+		t.Fatalf("the message must say the facts are a random sample: %q", message)
+	}
+	if strings.Count(message, "\n• ") != 3 {
+		t.Fatalf("expected 3 facts in the message: %q", message)
+	}
+}
+
+func TestBuildMyFactsMessageWithoutSampling(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(782)
+	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+
+	for i := 0; i < 2; i++ {
+		if err := app.SaveGeminiUserFact(db, chatID, user.ID, "Денис", fmt.Sprintf("факт-%d", i), time.Now()); err != nil {
+			t.Fatalf("save fact: %v", err)
+		}
+	}
+
+	message, err := buildMyFactsMessage(db, chatID, user)
+	if err != nil {
+		t.Fatalf("build message: %v", err)
+	}
+	if !strings.HasPrefix(message, "Вот что пенис-ИИ запомнил о тебе:") {
+		t.Fatalf("all facts fit, sampling must not be mentioned: %q", message)
 	}
 }

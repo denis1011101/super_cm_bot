@@ -948,6 +948,27 @@ func LoadRandomGeminiUserFacts(db *sql.DB, chatID int64, limit int) ([]GeminiUse
 	return facts, nil
 }
 
+// CountGeminiUserFactsForUser returns how many facts one Telegram user owns in
+// one chat.
+func CountGeminiUserFactsForUser(db *sql.DB, chatID, userID int64) (int, error) {
+	if db == nil {
+		return 0, errors.New("db is nil")
+	}
+	if userID == 0 {
+		return 0, nil
+	}
+
+	var count int
+	err := db.QueryRow(
+		"SELECT COUNT(*) FROM gemini_user_facts WHERE chat_id = ? AND user_id = ?",
+		chatID, userID,
+	).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 // LoadGeminiUserFactsForUser returns up to limit random facts owned by one
 // Telegram user in one chat.
 func LoadGeminiUserFactsForUser(db *sql.DB, chatID, userID int64, limit int) ([]GeminiUserFact, error) {

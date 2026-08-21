@@ -15,8 +15,12 @@ import (
 const (
 	myFactsLimit             = 3
 	maxMyFactsMessageRunes   = 4000
-	noSavedFactsMessage      = "ИИ пока ничего о тебе не запомнил."
-	savedFactsMessageHeading = "Вот что ИИ запомнил о тебе:"
+	noSavedFactsMessage      = "Пенис-ИИ пока ничего о тебе не запомнил."
+	savedFactsMessageHeading = "Вот что пенис-ИИ запомнил о тебе:"
+	// когда фактов больше, чем влезает в ответ, показываем случайные —
+	// иначе непонятно, почему каждый раз разные
+	sampledFactsMessageHeading = "Вот %d случайных факта из %d, что пенис-ИИ о тебе помнит:"
+	singleFactMessageHeading   = "Вот один случайный факт из %d, что пенис-ИИ о тебе помнит:"
 )
 
 // ShowMyGeminiFacts sends the command author only the facts that Gemini saved
@@ -30,7 +34,7 @@ func ShowMyGeminiFacts(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB)
 	message, err := buildMyFactsMessage(db, update.Message.Chat.ID, update.Message.From)
 	if err != nil {
 		log.Printf("ShowMyGeminiFacts: failed to load facts: %v", err)
-		app.SendMessage(update.Message.Chat.ID, "Не получилось достать воспоминания ИИ. Попробуй позже.", bot, update.Message.MessageID)
+		app.SendMessage(update.Message.Chat.ID, "Не получилось достать воспоминания пенис-ИИ. Попробуй позже.", bot, update.Message.MessageID)
 		return
 	}
 
@@ -51,9 +55,9 @@ func ForgetMyGeminiFacts(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.D
 		return
 	}
 
-	message := "ИИ и так ничего о тебе не помнил."
+	message := "Пенис-ИИ и так ничего о тебе не помнил."
 	if deleted > 0 {
-		message = fmt.Sprintf("Готово, ИИ забыл о тебе фактов: %d.", deleted)
+		message = fmt.Sprintf("Готово, пенис-ИИ забыл о тебе фактов: %d.", deleted)
 	}
 	app.SendMessage(update.Message.Chat.ID, message, bot, update.Message.MessageID)
 }
@@ -77,9 +81,23 @@ func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string,
 		return noSavedFactsMessage, nil
 	}
 
+	total, err := app.CountGeminiUserFactsForUser(db, chatID, user.ID)
+	if err != nil {
+		return "", err
+	}
+
+	heading := savedFactsMessageHeading
+	switch {
+	case total <= len(facts):
+	case len(facts) == 1:
+		heading = fmt.Sprintf(singleFactMessageHeading, total)
+	default:
+		heading = fmt.Sprintf(sampledFactsMessageHeading, len(facts), total)
+	}
+
 	var message strings.Builder
-	message.WriteString(savedFactsMessageHeading)
-	messageRunes := utf8.RuneCountInString(savedFactsMessageHeading)
+	message.WriteString(heading)
+	messageRunes := utf8.RuneCountInString(heading)
 	for _, fact := range facts {
 		line := "\n• " + fact.Fact
 		remaining := maxMyFactsMessageRunes - messageRunes
