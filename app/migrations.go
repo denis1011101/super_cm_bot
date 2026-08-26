@@ -87,6 +87,18 @@ var migrations = []Migration{
 			WHERE tg_chat_id IS NOT NULL AND tg_pen_id IS NOT NULL;
 			`,
 	},
+	{
+		ID:   6,
+		Name: "add_user_id_to_gemini_memories",
+		// Роль в памяти — отображаемое имя, а по нему тёзки неотличимы:
+		// /forgetme одного стирал бы реплики другого. Старые строки остаются
+		// с user_id = 0, но память живёт сутки, так что бэкфилл не нужен.
+		SQL: `
+			ALTER TABLE gemini_memories ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0;
+			CREATE INDEX IF NOT EXISTS idx_gemini_memories_chat_user_id
+				ON gemini_memories(chat_id, user_id);
+			`,
+	},
 }
 
 // RunMigrations выполняет миграции, которые еще не были применены

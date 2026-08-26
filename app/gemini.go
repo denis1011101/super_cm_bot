@@ -415,17 +415,17 @@ func (a *GeminiAgent) respond(m tgbotapi.Message) error {
 	return sendErr
 }
 
-func saveMemoryPair(db *sql.DB, chatID int64, userRole, userText, reply string, now time.Time) {
-	if err := SaveGeminiMemory(db, chatID, normalizeMemoryRole(userRole, "user"), userText, now); err != nil {
+func saveMemoryPair(db *sql.DB, chatID, userID int64, userRole, userText, reply string, now time.Time) {
+	if err := SaveGeminiMemory(db, chatID, userID, normalizeMemoryRole(userRole, "user"), userText, now); err != nil {
 		log.Printf("GeminiAgent.respond: save user memory error: %v", err)
 	}
-	if err := SaveGeminiMemory(db, chatID, "bot", reply, now); err != nil {
+	if err := SaveGeminiMemory(db, chatID, 0, "bot", reply, now); err != nil {
 		log.Printf("GeminiAgent.respond: save assistant memory error: %v", err)
 	}
 }
 
 func saveGeminiArtifacts(db *sql.DB, chatID int64, author *tgbotapi.User, userRole, userText, reply string, facts []GeminiUserFact, now time.Time) {
-	saveMemoryPair(db, chatID, userRole, userText, reply, now)
+	saveMemoryPair(db, chatID, tgUserID(author), userRole, userText, reply, now)
 	for _, fact := range facts {
 		userID := ResolveGeminiFactUserID(db, chatID, fact.UserName, author)
 		if err := SaveGeminiUserFact(db, chatID, userID, fact.UserName, fact.Fact, now); err != nil {
@@ -491,9 +491,8 @@ func (a *GeminiAgent) canExecuteAutoCommand(chatID int64, cmd string) bool {
 	return a.now().Sub(lastUpdate) >= 4*time.Hour
 }
 
-// memorySpeakerName — имя, под которым человек лежит в памяти. Это отображаемое
-// имя, а не tg id, поэтому записи, сделанные под прежним именем, чисткой памяти
-// не удалятся.
+// memorySpeakerName — имя, под которым человек виден Gemini в истории чата.
+// Это только подпись для промпта: адресуемся к строкам памяти по tg id.
 func memorySpeakerName(user *tgbotapi.User) string {
 	if user == nil {
 		return "user"
@@ -513,9 +512,17 @@ func RecordCommandMemory(db *sql.DB, chatID int64, author *tgbotapi.User, text s
 	if db == nil {
 		return
 	}
-	if err := SaveGeminiMemory(db, chatID, memorySpeakerName(author), text, time.Now()); err != nil {
+	if err := SaveGeminiMemory(db, chatID, tgUserID(author), memorySpeakerName(author), text, time.Now()); err != nil {
 		log.Printf("RecordCommandMemory: save user memory error: %v", err)
 	}
+}
+
+// tgUserID — id автора реплики, 0 для самого бота и неизвестных отправителей
+func tgUserID(user *tgbotapi.User) int64 {
+	if user == nil {
+		return 0
+	}
+	return user.ID
 }
 
 func maybeLoadGeminiFactsContext(db *sql.DB, chatID int64) (string, error) {

@@ -400,18 +400,22 @@ func TestForgetGeminiUserClearsFactsAndOwnLines(t *testing.T) {
 		t.Fatalf("save fact: %v", err)
 	}
 
+	// у второго участника то же отображаемое имя: чистка по имени вынесла бы
+	// и его реплики, поэтому адресуемся по tg id
 	lines := []struct {
 		chatID int64
+		userID int64
 		role   string
 	}{
-		{chatID, "Денис"},
-		{chatID, "Денис"},
-		{chatID, "Дима"},
-		{chatID, "bot"},
-		{chatID + 1, "Денис"},
+		{chatID, user.ID, "Денис"},
+		{chatID, user.ID, "Денис"},
+		{chatID, 2, "Денис"},
+		{chatID, 3, "Дима"},
+		{chatID, 0, "bot"},
+		{chatID + 1, user.ID, "Денис"},
 	}
 	for i, line := range lines {
-		if err := app.SaveGeminiMemory(db, line.chatID, line.role, fmt.Sprintf("реплика-%d", i), now); err != nil {
+		if err := app.SaveGeminiMemory(db, line.chatID, line.userID, line.role, fmt.Sprintf("реплика-%d", i), now); err != nil {
 			t.Fatalf("save memory: %v", err)
 		}
 	}
@@ -436,16 +440,19 @@ func TestForgetGeminiUserClearsFactsAndOwnLines(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM gemini_memories").Scan(&memories); err != nil {
 		t.Fatalf("count remaining memories: %v", err)
 	}
-	if memories != 3 {
-		t.Fatalf("expected the lines of the other user, of the bot and of the other chat to remain, got %d rows", memories)
+	if memories != 4 {
+		t.Fatalf("expected the lines of the namesake, of the other user, of the bot and of the other chat to remain, got %d rows", memories)
 	}
 
 	context, err := app.LoadGeminiMemoryContext(db, chatID, 10, now.Add(-time.Hour))
 	if err != nil {
 		t.Fatalf("LoadGeminiMemoryContext: %v", err)
 	}
-	if strings.Contains(context, "Денис") {
+	if strings.Contains(context, "реплика-0") || strings.Contains(context, "реплика-1") {
 		t.Fatalf("author lines must be gone from the context, got %q", context)
+	}
+	if !strings.Contains(context, "реплика-2") {
+		t.Fatalf("the namesake keeps their lines, got %q", context)
 	}
 }
 

@@ -32,7 +32,7 @@ func recordOutgoingMemory(chatID int64, text string) {
 	if db == nil {
 		return
 	}
-	if err := SaveGeminiMemory(db, chatID, "bot", text, time.Now()); err != nil {
+	if err := SaveGeminiMemory(db, chatID, 0, "bot", text, time.Now()); err != nil {
 		log.Printf("recordOutgoingMemory: save bot memory error: %v", err)
 	}
 }

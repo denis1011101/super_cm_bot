@@ -459,13 +459,13 @@ func TestSaveAndLoadGeminiMemoryContext(t *testing.T) {
 	chatID := int64(111)
 	now := time.Now()
 
-	if err := app.SaveGeminiMemory(db, chatID, "user", "first", now.Add(-2*time.Hour)); err != nil {
+	if err := app.SaveGeminiMemory(db, chatID, 1, "user", "first", now.Add(-2*time.Hour)); err != nil {
 		t.Fatalf("save first memory: %v", err)
 	}
-	if err := app.SaveGeminiMemory(db, chatID, "assistant", "second", now.Add(-time.Hour)); err != nil {
+	if err := app.SaveGeminiMemory(db, chatID, 0, "assistant", "second", now.Add(-time.Hour)); err != nil {
 		t.Fatalf("save second memory: %v", err)
 	}
-	if err := app.SaveGeminiMemory(db, chatID+1, "user", "other chat", now); err != nil {
+	if err := app.SaveGeminiMemory(db, chatID+1, 1, "user", "other chat", now); err != nil {
 		t.Fatalf("save other chat memory: %v", err)
 	}
 
@@ -485,13 +485,13 @@ func TestLoadGeminiMemoryContext_RespectsLimitAndSince(t *testing.T) {
 	chatID := int64(222)
 	now := time.Now()
 
-	if err := app.SaveGeminiMemory(db, chatID, "user", "expired", now.Add(-48*time.Hour)); err != nil {
+	if err := app.SaveGeminiMemory(db, chatID, 1, "user", "expired", now.Add(-48*time.Hour)); err != nil {
 		t.Fatalf("save expired memory: %v", err)
 	}
-	if err := app.SaveGeminiMemory(db, chatID, "assistant", "keep-1", now.Add(-2*time.Hour)); err != nil {
+	if err := app.SaveGeminiMemory(db, chatID, 0, "assistant", "keep-1", now.Add(-2*time.Hour)); err != nil {
 		t.Fatalf("save keep-1 memory: %v", err)
 	}
-	if err := app.SaveGeminiMemory(db, chatID, "user", "keep-2", now.Add(-time.Hour)); err != nil {
+	if err := app.SaveGeminiMemory(db, chatID, 1, "user", "keep-2", now.Add(-time.Hour)); err != nil {
 		t.Fatalf("save keep-2 memory: %v", err)
 	}
 
@@ -509,7 +509,7 @@ func TestLoadGeminiMemoryContext_RespectsLimitAndSince(t *testing.T) {
 func TestDeleteAllGeminiMemories(t *testing.T) {
 	db := setupGeminiDB(t)
 
-	if err := app.SaveGeminiMemory(db, 1, "user", "hello", time.Now()); err != nil {
+	if err := app.SaveGeminiMemory(db, 1, 1, "user", "hello", time.Now()); err != nil {
 		t.Fatalf("save memory: %v", err)
 	}
 	if err := app.DeleteAllGeminiMemories(db); err != nil {
