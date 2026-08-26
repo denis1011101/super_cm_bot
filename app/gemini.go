@@ -25,7 +25,7 @@ const (
 	geminiMinCooldown  = 60 * time.Minute
 	geminiMaxExtra     = 80 * time.Minute
 	geminiMemoryWindow = 24 * time.Hour
-	geminiMemoryLimit  = 10
+	geminiMemoryLimit  = 20
 	geminiAutoCmdMin   = 10
 	geminiAutoCmdMax   = 20
 	geminiAutoCmdGap   = 2 * time.Hour
@@ -381,7 +381,12 @@ func (a *GeminiAgent) respond(m tgbotapi.Message) error {
 	if err != nil {
 		log.Printf("GeminiAgent.respond: load facts context error: %v", err)
 	}
-	finalUserText := buildGeminiUserPrompt(userRole, userText, memoryContext, factsContext)
+	botID := int64(0)
+	if a.bot != nil {
+		botID = a.bot.Self.ID
+	}
+	replyContext := buildGeminiReplyContext(m.ReplyToMessage, botID)
+	finalUserText := buildGeminiUserPrompt(userRole, userText, memoryContext, factsContext, replyContext)
 
 	useSearch := a.search != nil && a.search.ShouldSearch(userText)
 	reply, err := a.callLLM(context.Background(), systemPrompt, finalUserText, userText, useSearch)
@@ -486,6 +491,9 @@ func (a *GeminiAgent) canExecuteAutoCommand(chatID int64, cmd string) bool {
 	return a.now().Sub(lastUpdate) >= 4*time.Hour
 }
 
+// memorySpeakerName — имя, под которым человек лежит в памяти. Это отображаемое
+// имя, а не tg id, поэтому записи, сделанные под прежним именем, чисткой памяти
+// не удалятся.
 func memorySpeakerName(user *tgbotapi.User) string {
 	if user == nil {
 		return "user"
@@ -497,6 +505,17 @@ func memorySpeakerName(user *tgbotapi.User) string {
 		return name
 	}
 	return "user"
+}
+
+// RecordCommandMemory кладёт в память команду пользователя. Без неё ответ бота
+// на /pen или /giga висит в контексте без автора, и непонятно, о ком речь.
+func RecordCommandMemory(db *sql.DB, chatID int64, author *tgbotapi.User, text string) {
+	if db == nil {
+		return
+	}
+	if err := SaveGeminiMemory(db, chatID, memorySpeakerName(author), text, time.Now()); err != nil {
+		log.Printf("RecordCommandMemory: save user memory error: %v", err)
+	}
 }
 
 func maybeLoadGeminiFactsContext(db *sql.DB, chatID int64) (string, error) {
@@ -526,7 +545,50 @@ func maybeLoadGeminiFactsContext(db *sql.DB, chatID int64) (string, error) {
 	return b.String(), nil
 }
 
-func buildGeminiUserPrompt(userRole, userText, memoryContext, factsContext string) string {
+// maxGeminiReplyQuoteRunes ограничивает цитату, чтобы длинный топ пенисов
+// не вытеснил из промпта всё остальное
+const maxGeminiReplyQuoteRunes = 500
+
+// buildGeminiReplyContext описывает сообщение, на которое отвечает пользователь.
+// Память даёт соседние реплики, но не говорит, к какой именно обращаются: в
+// живом чате нужная может быть не последней или вовсе выпасть из лимита.
+func buildGeminiReplyContext(reply *tgbotapi.Message, botID int64) string {
+	if reply == nil {
+		return ""
+	}
+
+	text := strings.TrimSpace(reply.Text)
+	if text == "" {
+		text = strings.TrimSpace(reply.Caption)
+	}
+	if text == "" {
+		return ""
+	}
+	if runes := []rune(text); len(runes) > maxGeminiReplyQuoteRunes {
+		text = string(runes[:maxGeminiReplyQuoteRunes-1]) + "…"
+	}
+
+	author := memorySpeakerName(reply.From)
+	if isGeminiSelfMessage(reply.From, botID) {
+		author = "bot"
+	}
+	return author + ": " + text
+}
+
+// isGeminiSelfMessage отличает наши сообщения от чужих. В системном промпте
+// "bot" — это мы, поэтому чужие боты чата должны остаться под своими именами;
+// на IsBot опираемся, только если свой id неизвестен.
+func isGeminiSelfMessage(author *tgbotapi.User, botID int64) bool {
+	if author == nil {
+		return false
+	}
+	if botID != 0 {
+		return author.ID == botID
+	}
+	return author.IsBot
+}
+
+func buildGeminiUserPrompt(userRole, userText, memoryContext, factsContext, replyContext string) string {
 	var b strings.Builder
 	if factsContext != "" {
 		b.WriteString("Known facts about chat members:\n")
@@ -536,6 +598,11 @@ func buildGeminiUserPrompt(userRole, userText, memoryContext, factsContext strin
 	if memoryContext != "" {
 		b.WriteString("Memory:\n")
 		b.WriteString(memoryContext)
+		b.WriteString("\n\n")
+	}
+	if replyContext != "" {
+		b.WriteString("The latest message is a reply to:\n")
+		b.WriteString(replyContext)
 		b.WriteString("\n\n")
 	}
 	b.WriteString("Latest message from ")

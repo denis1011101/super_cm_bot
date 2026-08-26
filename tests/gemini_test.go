@@ -2,10 +2,12 @@ package tests
 
 import (
 	"database/sql"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -742,5 +744,177 @@ func TestGeminiAgentDoesNotRetryClientErrors(t *testing.T) {
 	}
 	if reply := waitForGeminiReply(t, db, chatID); reply != "" {
 		t.Fatalf("no answer should be stored, got %q", reply)
+	}
+}
+
+// TestGeminiAgentPutsReplyTargetIntoPrompt — память не говорит, на какое именно
+// сообщение отвечает пользователь: нужная реплика может быть не последней или
+// вовсе выпасть из лимита, поэтому цитата идёт в промпт отдельным блоком
+func TestGeminiAgentPutsReplyTargetIntoPrompt(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		promptMu sync.Mutex
+		prompt   string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		promptMu.Lock()
+		prompt = string(body)
+		promptMu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ага"}]}}]}`))
+	}))
+	defer server.Close()
+
+	selfBot := mockSendBot(t, true)
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Bot:        selfBot,
+		Client:     server.Client(),
+		APIKey:     "test-key",
+		APIBaseURL: server.URL,
+		Model:      "gemini-3.7-flash",
+	})
+
+	chatID := int64(100020)
+	message := geminiTestMessage(chatID)
+	message.Text = "Я да"
+	message.ReplyToMessage = &tgbotapi.Message{
+		MessageID: 7,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      &tgbotapi.User{ID: selfBot.Self.ID, FirstName: "TestBot", IsBot: true},
+		Text:      "Вот 3 случайных факта из 12",
+	}
+
+	if !agent.TryRespondImmediate(message) {
+		t.Fatal("message should be processed")
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ага" {
+		t.Fatalf("expected an answer, got %q", reply)
+	}
+
+	promptMu.Lock()
+	defer promptMu.Unlock()
+	if !strings.Contains(prompt, "The latest message is a reply to:") {
+		t.Fatalf("prompt has no reply block: %s", prompt)
+	}
+	if !strings.Contains(prompt, `bot: Вот 3 случайных факта из 12`) {
+		t.Fatalf("prompt has no quoted bot message: %s", prompt)
+	}
+}
+
+// TestGeminiAgentQuotesReplyToOtherUser — реплай на чужое сообщение тоже
+// попадает в промпт, под именем автора
+func TestGeminiAgentQuotesReplyToOtherUser(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		promptMu sync.Mutex
+		prompt   string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		promptMu.Lock()
+		prompt = string(body)
+		promptMu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ага"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Client:     server.Client(),
+		APIKey:     "test-key",
+		APIBaseURL: server.URL,
+		Model:      "gemini-3.7-flash",
+	})
+
+	chatID := int64(100021)
+	message := geminiTestMessage(chatID)
+	message.Text = "поддерживаю"
+	message.ReplyToMessage = &tgbotapi.Message{
+		MessageID: 7,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      &tgbotapi.User{ID: 555, FirstName: "Enroscado"},
+		Caption:   "погнали в бар",
+	}
+
+	if !agent.TryRespondImmediate(message) {
+		t.Fatal("message should be processed")
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ага" {
+		t.Fatalf("expected an answer, got %q", reply)
+	}
+
+	promptMu.Lock()
+	defer promptMu.Unlock()
+	if !strings.Contains(prompt, `Enroscado: погнали в бар`) {
+		t.Fatalf("prompt has no quoted user message: %s", prompt)
+	}
+}
+
+// TestGeminiAgentDoesNotCallOtherBotsSelf — "bot" в промпте означает нас самих,
+// поэтому чужой бот чата должен остаться под своим именем
+func TestGeminiAgentDoesNotCallOtherBotsSelf(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		promptMu sync.Mutex
+		prompt   string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		promptMu.Lock()
+		prompt = string(body)
+		promptMu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ага"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Bot:        mockSendBot(t, true),
+		Client:     server.Client(),
+		APIKey:     "test-key",
+		APIBaseURL: server.URL,
+		Model:      "gemini-3.7-flash",
+	})
+
+	chatID := int64(100022)
+	message := geminiTestMessage(chatID)
+	message.Text = "и тебе того же"
+	message.ReplyToMessage = &tgbotapi.Message{
+		MessageID: 7,
+		Chat:      &tgbotapi.Chat{ID: chatID},
+		From:      &tgbotapi.User{ID: 777, FirstName: "ЧужойБот", IsBot: true},
+		Text:      "погода сегодня ясная",
+	}
+
+	if !agent.TryRespondImmediate(message) {
+		t.Fatal("message should be processed")
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ага" {
+		t.Fatalf("expected an answer, got %q", reply)
+	}
+
+	promptMu.Lock()
+	defer promptMu.Unlock()
+	if !strings.Contains(prompt, `ЧужойБот: погода сегодня ясная`) {
+		t.Fatalf("another bot must keep its name in the prompt: %s", prompt)
 	}
 }

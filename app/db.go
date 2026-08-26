@@ -1083,6 +1083,68 @@ func DeleteAllGeminiMemories(db *sql.DB) error {
 	return err
 }
 
+// ForgetGeminiUser стирает всё, что бот помнит о пользователе в этом чате:
+// сохранённые факты и его собственные реплики в краткосрочной памяти. Обе
+// очистки идут одной транзакцией — иначе бот отвечает "готово, забыл",
+// вычистив только половину. Возвращает число удалённых фактов.
+//
+// Гарантия узкая: сведения о человеке могут остаться в репликах бота и других
+// участников — их не отличить от остального разговора.
+func ForgetGeminiUser(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
+	if db == nil {
+		return 0, errors.New("db is nil")
+	}
+	if user == nil {
+		return 0, errors.New("user is nil")
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	var deletedFacts int64
+	if user.ID != 0 {
+		result, err := tx.Exec(
+			"DELETE FROM gemini_user_facts WHERE chat_id = ? AND user_id = ?",
+			chatID, user.ID,
+		)
+		if err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		if deletedFacts, err = result.RowsAffected(); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+	}
+
+	if _, err := deleteGeminiMemoriesBySpeaker(tx, chatID, memorySpeakerName(user)); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return deletedFacts, nil
+}
+
+// deleteGeminiMemoriesBySpeaker стирает краткосрочную память с репликами
+// конкретного участника чата
+func deleteGeminiMemoriesBySpeaker(exec SQLExecutor, chatID int64, speaker string) (int64, error) {
+	speaker = normalizeMemoryRole(speaker, "")
+	if speaker == "" {
+		return 0, nil
+	}
+
+	result, err := exec.Exec("DELETE FROM gemini_memories WHERE chat_id = ? AND role = ?", chatID, speaker)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func DeleteOldGeminiMemories(db *sql.DB, olderThan time.Time) error {
 	if db == nil {
 		return errors.New("db is nil")
