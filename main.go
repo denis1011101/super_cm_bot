@@ -114,6 +114,9 @@ func main() {
 		}
 	}()
 
+	// Свои реплики бот должен видеть в контексте Gemini, хоть и не отвечает на них
+	app.EnableOutgoingMemory(db)
+
 	// Создаем мьютекс для блокировки базы данных
 	mutex := &sync.Mutex{}
 
@@ -184,6 +187,7 @@ func main() {
 
 				// Обработка команд
 				if handler, exists := commandHandlers[update.Message.Text]; exists {
+					app.RecordCommandMemory(db, chatID, update.Message.From, update.Message.Text)
 					handler(update, bot, db)
 				} else { // Обработка обычных сообщений
 					handlers.HandlePenCommand(update, bot, db)
@@ -193,8 +197,7 @@ func main() {
 				if sosalRe.MatchString(strings.TrimSpace(update.Message.Text)) && rand.Intn(5) == 0 {
 					go func(chatID int64) {
 						time.Sleep(time.Duration(2+rand.Intn(4)) * time.Second)
-						sosal := tgbotapi.NewMessage(chatID, "сосал?")
-						_, _ = bot.Send(sosal)
+						app.SendMessage(chatID, "сосал?", bot, 0)
 					}(chatID)
 				}
 
@@ -202,8 +205,7 @@ func main() {
 				if klewoRe.MatchString(strings.ToLower(update.Message.Text)) {
 					go func(chatID int64, text string) {
 						time.Sleep(time.Duration(2+rand.Intn(4)) * time.Second)
-						echo := tgbotapi.NewMessage(chatID, text)
-						_, _ = bot.Send(echo)
+						app.SendMessage(chatID, text, bot, 0)
 					}(chatID, update.Message.Text)
 				} else {
 					// если нас тегают или отвечают на наше сообщение -> immediate Gemini

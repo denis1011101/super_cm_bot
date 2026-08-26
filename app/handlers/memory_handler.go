@@ -38,7 +38,8 @@ func ShowMyGeminiFacts(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB)
 		return
 	}
 
-	app.SendMessage(update.Message.Chat.ID, message, bot, update.Message.MessageID)
+	// вывод фактов — копия того, что стирает /forgetme, поэтому мимо памяти
+	app.SendMessageWithoutMemory(update.Message.Chat.ID, message, bot, update.Message.MessageID)
 }
 
 // ForgetMyGeminiFacts deletes facts about the command author in this chat.
@@ -118,6 +119,9 @@ func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string,
 	return message.String(), nil
 }
 
+// deleteMyFacts стирает и факты, и реплики пользователя из краткосрочной
+// памяти: иначе бот говорит "забыл", а ИИ ещё сутки видит реплики, из которых
+// те же факты выводятся заново. Ошибка любой из очисток — ошибка команды.
 func deleteMyFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
 	if user == nil {
 		return 0, errors.New("user is nil")
@@ -125,5 +129,5 @@ func deleteMyFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error)
 	if _, err := app.ClaimOwnerlessGeminiUserFacts(db, chatID, user); err != nil {
 		log.Printf("deleteMyFacts: claim ownerless facts: %v", err)
 	}
-	return app.DeleteGeminiUserFactsForUser(db, chatID, user.ID)
+	return app.ForgetGeminiUser(db, chatID, user)
 }

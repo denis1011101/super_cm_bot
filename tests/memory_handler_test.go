@@ -383,3 +383,103 @@ func TestBuildMyFactsMessageWithoutSampling(t *testing.T) {
 		t.Fatalf("all facts fit, sampling must not be mentioned: %q", message)
 	}
 }
+
+// TestForgetGeminiUserClearsFactsAndOwnLines — /forgetme обязан вычистить и
+// краткосрочную память автора: иначе бот говорит "забыл", а ИИ сутки видит
+// реплики, из которых те же факты выводятся заново
+func TestForgetGeminiUserClearsFactsAndOwnLines(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(447)
+	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+	now := time.Now()
+
+	if err := app.SaveGeminiUserFact(db, chatID, user.ID, "Денис", "не спит сутки", now); err != nil {
+		t.Fatalf("save fact: %v", err)
+	}
+	if err := app.SaveGeminiUserFact(db, chatID, 2, "Дима", "икона стиля", now); err != nil {
+		t.Fatalf("save fact: %v", err)
+	}
+
+	// у второго участника то же отображаемое имя: чистка по имени вынесла бы
+	// и его реплики, поэтому адресуемся по tg id
+	lines := []struct {
+		chatID int64
+		userID int64
+		role   string
+	}{
+		{chatID, user.ID, "Денис"},
+		{chatID, user.ID, "Денис"},
+		{chatID, 2, "Денис"},
+		{chatID, 3, "Дима"},
+		{chatID, 0, "bot"},
+		{chatID + 1, user.ID, "Денис"},
+	}
+	for i, line := range lines {
+		if err := app.SaveGeminiMemory(db, line.chatID, line.userID, line.role, fmt.Sprintf("реплика-%d", i), now); err != nil {
+			t.Fatalf("save memory: %v", err)
+		}
+	}
+
+	deleted, err := app.ForgetGeminiUser(db, chatID, user)
+	if err != nil {
+		t.Fatalf("forget user: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected 1 deleted fact, got %d", deleted)
+	}
+
+	var facts int
+	if err := db.QueryRow("SELECT COUNT(*) FROM gemini_user_facts").Scan(&facts); err != nil {
+		t.Fatalf("count remaining facts: %v", err)
+	}
+	if facts != 1 {
+		t.Fatalf("expected the fact of the other user to remain, got %d rows", facts)
+	}
+
+	var memories int
+	if err := db.QueryRow("SELECT COUNT(*) FROM gemini_memories").Scan(&memories); err != nil {
+		t.Fatalf("count remaining memories: %v", err)
+	}
+	if memories != 4 {
+		t.Fatalf("expected the lines of the namesake, of the other user, of the bot and of the other chat to remain, got %d rows", memories)
+	}
+
+	context, err := app.LoadGeminiMemoryContext(db, chatID, 10, now.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("LoadGeminiMemoryContext: %v", err)
+	}
+	if strings.Contains(context, "реплика-0") || strings.Contains(context, "реплика-1") {
+		t.Fatalf("author lines must be gone from the context, got %q", context)
+	}
+	if !strings.Contains(context, "реплика-2") {
+		t.Fatalf("the namesake keeps their lines, got %q", context)
+	}
+}
+
+// TestForgetGeminiUserRollsBackOnFailure — очистки идут одной транзакцией,
+// поэтому упавшая вторая не оставляет пользователя с половиной удалённого
+func TestForgetGeminiUserRollsBackOnFailure(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(448)
+	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+	now := time.Now()
+
+	if err := app.SaveGeminiUserFact(db, chatID, user.ID, "Денис", "не спит сутки", now); err != nil {
+		t.Fatalf("save fact: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE gemini_memories RENAME TO gemini_memories_hidden"); err != nil {
+		t.Fatalf("hide memories table: %v", err)
+	}
+
+	if _, err := app.ForgetGeminiUser(db, chatID, user); err == nil {
+		t.Fatal("expected an error when the memories table is unavailable")
+	}
+
+	var facts int
+	if err := db.QueryRow("SELECT COUNT(*) FROM gemini_user_facts").Scan(&facts); err != nil {
+		t.Fatalf("count remaining facts: %v", err)
+	}
+	if facts != 1 {
+		t.Fatalf("the fact must survive a rolled back cleanup, got %d rows", facts)
+	}
+}

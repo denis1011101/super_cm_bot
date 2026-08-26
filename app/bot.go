@@ -4,22 +4,65 @@ import (
 	"database/sql"
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// Свои сообщения бот никогда не обрабатывает как входящие — Telegram их и не
+// присылает. Но в контексте Gemini они нужны: иначе он не понимает разговор,
+// половину которого сам же и наговорил (результаты /pen, /giga, топы).
+var (
+	outgoingMemoryMu sync.RWMutex
+	outgoingMemoryDB *sql.DB
+)
+
+// EnableOutgoingMemory включает запись всех исходящих сообщений бота в память Gemini
+func EnableOutgoingMemory(db *sql.DB) {
+	outgoingMemoryMu.Lock()
+	defer outgoingMemoryMu.Unlock()
+	outgoingMemoryDB = db
+}
+
+func recordOutgoingMemory(chatID int64, text string) {
+	outgoingMemoryMu.RLock()
+	db := outgoingMemoryDB
+	outgoingMemoryMu.RUnlock()
+	if db == nil {
+		return
+	}
+	if err := SaveGeminiMemory(db, chatID, 0, "bot", text, time.Now()); err != nil {
+		log.Printf("recordOutgoingMemory: save bot memory error: %v", err)
+	}
+}
+
 // SendMessage отправляет сообщение в чат или как ответ на конкретное сообщение
 func SendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) {
+	if sendMessage(chatID, text, bot, replyToMessageID) {
+		recordOutgoingMemory(chatID, text)
+	}
+}
+
+// SendMessageWithoutMemory отправляет сообщение, не сохраняя его в память Gemini.
+// Нужно там, где текст пересказывает данные, которые пользователь вправе стереть:
+// иначе /forgetme удалит факты, а их копия останется висеть в контексте.
+func SendMessageWithoutMemory(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) {
+	sendMessage(chatID, text, bot, replyToMessageID)
+}
+
+// sendMessage отправляет сообщение и сообщает, дошло ли оно
+func sendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) bool {
 	msg := tgbotapi.NewMessage(chatID, text)
 	if replyToMessageID != 0 {
 		msg.ReplyToMessageID = replyToMessageID
 	}
 	if _, err := bot.Send(msg); err != nil {
 		log.Println("Error sending message:", err)
-	} else {
-		log.Printf("Message sent to chat ID %d: %s", chatID, text)
+		return false
 	}
+	log.Printf("Message sent to chat ID %d: %s", chatID, text)
+	return true
 }
 
 // ArchiveInactiveUsers помечает пользователей как неактивных, если они не обновлялись 180 дней

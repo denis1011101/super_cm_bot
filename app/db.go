@@ -555,7 +555,10 @@ func UserExists(db *sql.DB, userID int64, chatID int64) (bool, error) {
 	return exists, nil
 }
 
-func SaveGeminiMemory(db *sql.DB, chatID int64, role, content string, createdAt time.Time) error {
+// SaveGeminiMemory сохраняет реплику в краткосрочную память. userID — tg id
+// автора (0 для самого бота): роль это отображаемое имя, по нему тёзки
+// неотличимы, а адресная чистка должна попадать ровно в одного человека.
+func SaveGeminiMemory(db *sql.DB, chatID, userID int64, role, content string, createdAt time.Time) error {
 	if db == nil {
 		return errors.New("db is nil")
 	}
@@ -565,8 +568,8 @@ func SaveGeminiMemory(db *sql.DB, chatID int64, role, content string, createdAt 
 	}
 
 	_, err := db.Exec(
-		"INSERT INTO gemini_memories (chat_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-		chatID, role, content, createdAt.UTC().Format(sqliteTimestampLayout),
+		"INSERT INTO gemini_memories (chat_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+		chatID, userID, role, content, createdAt.UTC().Format(sqliteTimestampLayout),
 	)
 	return err
 }
@@ -1081,6 +1084,69 @@ func DeleteAllGeminiMemories(db *sql.DB) error {
 	}
 	_, err := db.Exec("DELETE FROM gemini_memories")
 	return err
+}
+
+// ForgetGeminiUser стирает всё, что бот помнит о пользователе в этом чате:
+// сохранённые факты и его собственные реплики в краткосрочной памяти. Обе
+// очистки идут одной транзакцией — иначе бот отвечает "готово, забыл",
+// вычистив только половину. Возвращает число удалённых фактов.
+//
+// Гарантия узкая: сведения о человеке могут остаться в репликах бота и других
+// участников — их не отличить от остального разговора. Реплики, записанные до
+// миграции 6, идут без tg id и доживают свои сутки нетронутыми.
+func ForgetGeminiUser(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
+	if db == nil {
+		return 0, errors.New("db is nil")
+	}
+	if user == nil {
+		return 0, errors.New("user is nil")
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	var deletedFacts int64
+	if user.ID != 0 {
+		result, err := tx.Exec(
+			"DELETE FROM gemini_user_facts WHERE chat_id = ? AND user_id = ?",
+			chatID, user.ID,
+		)
+		if err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+		if deletedFacts, err = result.RowsAffected(); err != nil {
+			_ = tx.Rollback()
+			return 0, err
+		}
+	}
+
+	if _, err := deleteGeminiMemoriesByAuthor(tx, chatID, user.ID); err != nil {
+		_ = tx.Rollback()
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return deletedFacts, nil
+}
+
+// deleteGeminiMemoriesByAuthor стирает реплики конкретного участника чата.
+// Ищем по tg id, а не по имени: тёзки в чате не редкость, и чистка по имени
+// заодно выносила бы контекст однофамильца.
+func deleteGeminiMemoriesByAuthor(exec SQLExecutor, chatID, userID int64) (int64, error) {
+	if userID == 0 {
+		return 0, nil
+	}
+
+	result, err := exec.Exec("DELETE FROM gemini_memories WHERE chat_id = ? AND user_id = ?", chatID, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func DeleteOldGeminiMemories(db *sql.DB, olderThan time.Time) error {
