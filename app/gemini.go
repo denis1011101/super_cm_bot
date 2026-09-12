@@ -58,7 +58,7 @@ type GeminiAgentConfig struct {
 	Now                func() time.Time
 	Search             SearchAdapter
 	Model              string
-	FallbackModel      string
+	FallbackModels     []string
 	APIKey             string
 	APIBaseURL         string
 	MemoryWindow       time.Duration
@@ -108,21 +108,21 @@ type pendingGeminiResponse struct {
 }
 
 type GeminiAgent struct {
-	db            *sql.DB
-	bot           *tgbotapi.BotAPI
-	client        *http.Client
-	now           func() time.Time
-	search        SearchAdapter
-	model         string
-	fallbackModel string
-	apiKey        string
-	apiBaseURL    string
-	memoryWindow  time.Duration
-	memoryLimit   int
-	autoCommand   GeminiAutoCommandHandler
-	responseDelay func() time.Duration
-	maxAttempts   int
-	retryDelay    func(attempt int) time.Duration
+	db             *sql.DB
+	bot            *tgbotapi.BotAPI
+	client         *http.Client
+	now            func() time.Time
+	search         SearchAdapter
+	model          string
+	fallbackModels []string
+	apiKey         string
+	apiBaseURL     string
+	memoryWindow   time.Duration
+	memoryLimit    int
+	autoCommand    GeminiAutoCommandHandler
+	responseDelay  func() time.Duration
+	maxAttempts    int
+	retryDelay     func(attempt int) time.Duration
 
 	mu               sync.Mutex
 	geminiLast       map[int64]time.Time
@@ -132,11 +132,11 @@ type GeminiAgent struct {
 
 func NewGeminiAgent(db *sql.DB, bot *tgbotapi.BotAPI) *GeminiAgent {
 	return NewGeminiAgentWithConfig(GeminiAgentConfig{
-		DB:            db,
-		Bot:           bot,
-		Model:         os.Getenv("GEMINI_MODEL"),
-		FallbackModel: os.Getenv("GEMINI_FALLBACK_MODEL"),
-		APIKey:        os.Getenv("GEMINI_API_KEY"),
+		DB:             db,
+		Bot:            bot,
+		Model:          os.Getenv("GEMINI_MODEL"),
+		FallbackModels: strings.Split(os.Getenv("GEMINI_FALLBACK_MODEL"), ","),
+		APIKey:         os.Getenv("GEMINI_API_KEY"),
 	})
 }
 
@@ -173,10 +173,7 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 	if responseDelay == nil {
 		responseDelay = randomGeminiResponseDelay
 	}
-	fallbackModel := normalizeGeminiModel(cfg.FallbackModel)
-	if fallbackModel == model {
-		fallbackModel = ""
-	}
+	fallbackModels := normalizeGeminiFallbackModels(model, cfg.FallbackModels)
 	maxAttempts := cfg.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = geminiMaxAttempts
@@ -193,7 +190,7 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 		now:              nowFn,
 		search:           search,
 		model:            model,
-		fallbackModel:    fallbackModel,
+		fallbackModels:   fallbackModels,
 		apiKey:           cfg.APIKey,
 		apiBaseURL:       apiBaseURL,
 		memoryWindow:     memoryWindow,
@@ -771,12 +768,9 @@ func (a *GeminiAgent) callLLM(ctx context.Context, systemPrompt, userPrompt, sea
 
 // generateContentWithFallback retries transient Google failures (503 and
 // friends) and, when the configured model stays unavailable, repeats the
-// request on the fallback model.
+// request on each fallback model in turn.
 func (a *GeminiAgent) generateContentWithFallback(ctx context.Context, reqData GeminiRequest) (string, error) {
-	models := []string{a.model}
-	if a.fallbackModel != "" {
-		models = append(models, a.fallbackModel)
-	}
+	models := append([]string{a.model}, a.fallbackModels...)
 
 	var lastErr error
 	for _, model := range models {
@@ -909,6 +903,23 @@ func (a *GeminiAgent) executeGenerateContentWithModel(ctx context.Context, model
 
 func (a *GeminiAgent) generateContentURL(model string) string {
 	return a.apiBaseURL + "/v1beta/models/" + model + ":generateContent?key=" + a.apiKey
+}
+
+// normalizeGeminiFallbackModels keeps the configured order, drops blanks,
+// duplicates and the primary model itself: repeating a model that already
+// failed every retry would only burn time.
+func normalizeGeminiFallbackModels(primary string, models []string) []string {
+	seen := map[string]bool{primary: true}
+	var out []string
+	for _, model := range models {
+		model = normalizeGeminiModel(model)
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		out = append(out, model)
+	}
+	return out
 }
 
 func normalizeGeminiModel(model string) string {

@@ -685,14 +685,14 @@ func TestGeminiAgentFallsBackToAnotherModel(t *testing.T) {
 	defer server.Close()
 
 	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
-		DB:            db,
-		Client:        server.Client(),
-		APIKey:        "test-key",
-		APIBaseURL:    server.URL,
-		Model:         "gemini-3.7-flash",
-		FallbackModel: "gemini-3.5-flash",
-		MaxAttempts:   2,
-		RetryDelay:    func(int) time.Duration { return 0 },
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.7-flash",
+		FallbackModels: []string{"gemini-3.5-flash"},
+		MaxAttempts:    2,
+		RetryDelay:     func(int) time.Duration { return 0 },
 	})
 
 	chatID := int64(100011)
@@ -711,6 +711,63 @@ func TestGeminiAgentFallsBackToAnotherModel(t *testing.T) {
 	}
 }
 
+// TestGeminiAgentWalksTheWholeFallbackChain — фолбеков может быть несколько:
+// когда и основная, и первая запасная модель лежат, очередь доходит до третьей
+func TestGeminiAgentWalksTheWholeFallbackChain(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		if model != "gemini-3.6-flash" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"третья модель"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Client:     server.Client(),
+		APIKey:     "test-key",
+		APIBaseURL: server.URL,
+		Model:      "gemini-3.8-flash",
+		// blanks, the primary model and a repeated fallback must not add extra hops
+		FallbackModels: []string{" gemini-3.7-flash ", "", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"},
+		MaxAttempts:    2,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100013)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "третья модель" {
+		t.Fatalf("expected the answer of the last fallback model, got %q", reply)
+	}
+	want := []string{
+		"gemini-3.8-flash", "gemini-3.8-flash",
+		"gemini-3.7-flash", "gemini-3.7-flash",
+		"gemini-3.6-flash",
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected the models to be tried in order %v, got %v", want, models)
+	}
+}
+
 func TestGeminiAgentDoesNotRetryClientErrors(t *testing.T) {
 	db := setupGeminiDB(t)
 	var requests atomic.Int32
@@ -723,14 +780,14 @@ func TestGeminiAgentDoesNotRetryClientErrors(t *testing.T) {
 	defer server.Close()
 
 	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
-		DB:            db,
-		Client:        server.Client(),
-		APIKey:        "test-key",
-		APIBaseURL:    server.URL,
-		Model:         "gemini-3.7-flash",
-		FallbackModel: "gemini-3.5-flash",
-		MaxAttempts:   3,
-		RetryDelay:    func(int) time.Duration { return 0 },
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.7-flash",
+		FallbackModels: []string{"gemini-3.5-flash"},
+		MaxAttempts:    3,
+		RetryDelay:     func(int) time.Duration { return 0 },
 	})
 
 	chatID := int64(100012)
