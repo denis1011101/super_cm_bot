@@ -33,25 +33,17 @@ func InitDB() (*sql.DB, error) {
 	}
 
 	dbPath := "./data/pens.db"
-
-	// Проверка, существует ли директория базы данных
-	if _, err := os.Stat(dbDir); os.IsNotExist(err) {
-		// Директория не существует, создаём её
-		err = os.MkdirAll(dbDir, os.ModePerm)
-		if err != nil {
-			log.Printf("Error creating directory: %v", err)
-			return nil, err
-		}
-	}
+	dsn := dbPath + "?_busy_timeout=5000"
 
 	// Проверка, существует ли файл базы данных
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		// Файл не существует, создаём базу данных и таблицу
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite3", dsn)
 		if err != nil {
 			log.Printf("Error opening database: %v", err)
 			return nil, err
 		}
+		db.SetMaxOpenConns(1)
 
 		createTableQuery := `
 		CREATE TABLE IF NOT EXISTS pens (
@@ -107,16 +99,24 @@ func InitDB() (*sql.DB, error) {
 			return nil, err
 		}
 
+		// Установка режима журнала WAL
+		_, err = db.Exec("PRAGMA journal_mode = WAL;")
+		if err != nil {
+			log.Printf("Error setting journal_mode: %v", err)
+			return nil, err
+		}
+
 		log.Println("Database and table and index created successfully")
 		return db, nil
 	}
 
 	// Файл существует, просто открываем базу данных
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		log.Printf("Error opening database: %v", err)
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
 
 	// Создание индекса для pen_length, если он еще не существует
 	createIndexQuery := `CREATE INDEX IF NOT EXISTS idx_pen_length ON pens(pen_length);`
@@ -217,13 +217,14 @@ func GetUserPen(db *sql.DB, userID int64, chatID int64) (Pen, error) {
 }
 
 // UpdateUserPen обновляет значения pen_length, pen_last_update_at и отмечает пользователя как активного
-func UpdateUserPen(db *sql.DB, userID int64, chatID int64, newSize int) {
+func UpdateUserPen(db *sql.DB, userID int64, chatID int64, newSize int) error {
 	_, err := db.Exec("UPDATE pens SET pen_length = ?, pen_last_update_at = ?, is_active = TRUE WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, time.Now(), userID, chatID)
 	if err != nil {
 		log.Printf("Error updating pen size, last update time and active status: %v", err)
-	} else {
-		log.Printf("Successfully updated pen size, last update time and active status for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+		return err
 	}
+	log.Printf("Successfully updated pen size, last update time and active status for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+	return nil
 }
 
 // GetGigaLastUpdateTime получает время последнего обновления для команды /giga
@@ -271,37 +272,35 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 }
 
 // UpdateGiga обновляет значения handsome_count и handsome_last_update_at в базе данных
-func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) {
+func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) error {
 	tx, err := db.Begin()
 	if err != nil {
 		log.Printf("Error starting transaction: %v", err)
-		return
+		return err
 	}
+	defer tx.Rollback()
 
 	_, err = tx.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
 	if err != nil {
 		log.Printf("Error updating giga count: %v", err)
-		if rbErr := tx.Rollback(); rbErr != nil {
-			log.Printf("Error on transaction rollback: %v", rbErr)
-		}
-	} else {
-		log.Printf("Successfully updated giga count for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+		return err
 	}
 
 	// Обновляем last_update
 	err = UpdateGigaLastUpdate(tx, chatID)
 	if err != nil {
-		return
+		return err
 	}
 
 	// Подтверждаем транзакцию
 	err = tx.Commit()
 	if err != nil {
 		log.Printf("Error committing transaction: %v", err)
-		if rbErr := tx.Rollback(); rbErr != nil {
-			log.Printf("Error on transaction rollback: %v", rbErr)
-		}
+		return err
 	}
+
+	log.Printf("Successfully updated giga count for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+	return nil
 }
 
 func UpdateGigaLastUpdate(db SQLExecutor, chatID int64) error {
@@ -319,36 +318,35 @@ func UpdateGigaLastUpdate(db SQLExecutor, chatID int64) error {
 }
 
 // UpdateUnhandsome обновляет значения unhandsome_count и unhandsome_last_update_at в базе данных
-func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) {
+func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) error {
 	tx, err := db.Begin()
 	if err != nil {
 		log.Printf("Error starting transaction: %v", err)
-		return
+		return err
 	}
+	defer tx.Rollback()
+
 	_, err = tx.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
 	if err != nil {
 		log.Printf("Error updating unhandsome count and last_update_at: %v", err)
-		if rbErr := tx.Rollback(); rbErr != nil {
-			log.Printf("Error on transaction rollback: %v", rbErr)
-		}
-	} else {
-		log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+		return err
 	}
 
 	// Обновляем last_update
 	err = UpdateUnhandsomeLastUpdate(tx, chatID)
 	if err != nil {
-		return
+		return err
 	}
 
 	// Подтверждаем транзакцию
 	err = tx.Commit()
 	if err != nil {
 		log.Printf("Error committing transaction: %v", err)
-		if rbErr := tx.Rollback(); rbErr != nil {
-			log.Printf("Error on transaction rollback: %v", rbErr)
-		}
+		return err
 	}
+
+	log.Printf("Successfully updated unhandsome count and last_update_at for userID: %d, chatID: %d, newSize: %d", userID, chatID, newSize)
+	return nil
 }
 
 func UpdateUnhandsomeLastUpdate(db SQLExecutor, chatID int64) error {
@@ -405,7 +403,7 @@ func backupDatabase() error {
 	// Создание директории для резервной копии, если она не существует
 	if _, err := os.Stat(backupDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(backupDir, 0755); err != nil {
-			log.Fatalf("Cannot create backup directory: %s, error: %v", backupDir, err)
+			log.Printf("Cannot create backup directory: %s, error: %v", backupDir, err)
 			return err
 		}
 	}
@@ -417,7 +415,7 @@ func backupDatabase() error {
 
 	// Проверка существования файла базы данных
 	if _, err := os.Stat(source); os.IsNotExist(err) {
-		log.Fatalf("Database file does not exist: %s", source)
+		log.Printf("Database file does not exist: %s", source)
 		return fmt.Errorf("database file does not exist: %s", source)
 	}
 

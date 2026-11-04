@@ -62,7 +62,10 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 
 	// Обновление размера  и времени последнего обновления в базе данных
 	newSize := pen.Size + result.Size
-	app.UpdateUserPen(db, userID, chatID, newSize)
+	if err := app.UpdateUserPen(db, userID, chatID, newSize); err != nil {
+		log.Printf("Error updating pen size: %v", err)
+		return
+	}
 	log.Printf("Updated pen size: %d", newSize)
 
 	//Отправка ответного сообщения

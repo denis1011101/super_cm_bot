@@ -202,7 +202,10 @@ func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	newSize := pen.Size + addSize
 
 	// Обновление значения члена и времени последнего обновления у выигравшего участника
-	app.UpdateGiga(db, newSize, randomMember.ID, chatID)
+	if err := app.UpdateGiga(db, newSize, randomMember.ID, chatID); err != nil {
+		log.Printf("Error updating giga in database: %v", err)
+		return
+	}
 
 	// Генерируем сообщени для чата
 	message := messagegenerators.GetRandomGigaMessage(randomMember.Name, addSize, newSize, isHoliday)

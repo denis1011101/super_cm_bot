@@ -73,6 +73,7 @@ func TestRunMigrations(t *testing.T) {
 			if dataType != "BOOLEAN" {
 				t.Errorf("Expected is_active column type to be BOOLEAN, but got %s", dataType)
 			}
+			_ = rows.Close()
 			break
 		}
 	}
