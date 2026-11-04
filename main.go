@@ -62,22 +62,7 @@ func main() {
 		log.Printf("Failed to set SQLITE_TRACE_FILE env: %v", err)
 	}
 
-	// Открываем файл для записи логов
-	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
-	}
-	defer func() {
-		if err := logFile.Close(); err != nil {
-			log.Printf("Error closing log file: %v", err)
-		}
-	}()
-
-	// Настраиваем логгер для записи в файл
-	log.SetOutput(logFile)
-
-	err = godotenv.Load()
-	if err != nil {
+	if err := godotenv.Load(); err != nil {
 		log.Fatalf("Error loading .env file")
 	}
 
@@ -187,6 +172,11 @@ func main() {
 
 	// Обработка обновлений
 	for update := range updates {
+		if update.MyChatMember != nil { // Обработка добавления бота в чат
+			handlers.HandleBotAddition(update, bot)
+			continue
+		}
+
 		if update.Message != nil {
 			chatID := update.Message.Chat.ID
 			if chatID == specificChatID {
@@ -233,9 +223,6 @@ func main() {
 						_ = geminiAgent.TryRespond(update, specificChatID)
 					}
 				}
-
-			} else if update.MyChatMember != nil { // Обработка добавления бота в чат
-				handlers.HandleBotAddition(update, bot)
 			}
 		}
 	}

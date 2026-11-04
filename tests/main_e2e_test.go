@@ -144,6 +144,11 @@ func TestBotE2E(t *testing.T) {
 	// Запускаем бота в отдельной горутине
 	go func() {
 		for update := range updates {
+			if update.MyChatMember != nil { // Обработка добавления бота в чат
+				handlers.HandleBotAddition(update, bot)
+				continue
+			}
+
 			if update.Message != nil {
 				chatID := update.Message.Chat.ID
 				if chatID == specificChatID {
@@ -158,8 +163,6 @@ func TestBotE2E(t *testing.T) {
 						echo := tgbotapi.NewMessage(chatID, update.Message.Text)
 						_, _ = bot.Send(echo)
 					}
-				} else if update.MyChatMember != nil { // Обработка добавления бота в чат
-					handlers.HandleBotAddition(update, bot)
 				}
 			}
 		}
