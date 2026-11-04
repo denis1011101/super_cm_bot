@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/denis1011101/super_cm_bot/app/agentbus"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -124,6 +125,12 @@ type GeminiAgent struct {
 	maxAttempts    int
 	retryDelay     func(attempt int) time.Duration
 
+	// busMu guards the status bus only. It is deliberately not mu: publishing
+	// happens on the LLM path, which is sometimes reached while mu is held.
+	busMu    sync.Mutex
+	bus      *agentbus.Registry
+	selfName string
+
 	mu               sync.Mutex
 	geminiLast       map[int64]time.Time
 	autoCommandLast  map[int64]time.Time
@@ -209,6 +216,61 @@ func (a *GeminiAgent) SetAutoCommandHandler(handler GeminiAutoCommandHandler) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.autoCommand = handler
+}
+
+// SetStatusBus makes the agent publish its own health and quota under selfName,
+// so peer bots can learn that this one is out of budget without waiting for a
+// Telegram message that may never be delivered.
+func (a *GeminiAgent) SetStatusBus(reg *agentbus.Registry, selfName string) {
+	a.busMu.Lock()
+	defer a.busMu.Unlock()
+	a.bus, a.selfName = reg, selfName
+}
+
+// publishStatus is best effort: the board going wrong must never take the bot
+// down with it, so failures are logged and swallowed.
+func (a *GeminiAgent) publishStatus(health agentbus.Health, quota agentbus.Quota, errClass, detail string) {
+	a.busMu.Lock()
+	bus, self := a.bus, a.selfName
+	a.busMu.Unlock()
+	if bus == nil || self == "" {
+		return
+	}
+	if _, err := bus.Report(self, health, quota, errClass, detail); err != nil {
+		log.Printf("GeminiAgent.publishStatus: %v", err)
+	}
+}
+
+// classifyGeminiError turns a failure into the closed set peers understand.
+// The error text itself is never forwarded: it can contain the request URL,
+// which carries the API key.
+func classifyGeminiError(err error) (agentbus.Health, agentbus.Quota, string) {
+	if err == nil {
+		return agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone
+	}
+
+	var apiErr *geminiAPIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusTooManyRequests:
+			return agentbus.HealthDegraded, agentbus.QuotaExhausted, agentbus.ErrResourceExausted
+		case http.StatusInternalServerError, http.StatusBadGateway,
+			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrUpstreamDown
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return agentbus.HealthDown, agentbus.QuotaUnknown, agentbus.ErrConfig
+		default:
+			return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrOther
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrTimeout
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrUpstreamDown
+	}
+	return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrOther
 }
 
 func (a *GeminiAgent) TryRespond(update tgbotapi.Update, targetChatID int64) bool {
@@ -736,6 +798,7 @@ type GeminiResponse struct {
 
 func (a *GeminiAgent) callLLM(ctx context.Context, systemPrompt, userPrompt, searchQuery string, useSearch bool) (string, error) {
 	if a.apiKey == "" {
+		a.publishStatus(agentbus.HealthDown, agentbus.QuotaUnknown, agentbus.ErrConfig, "GEMINI_API_KEY is not set")
 		return "", errors.New("GEMINI_API_KEY is not set")
 	}
 
@@ -780,10 +843,12 @@ func (a *GeminiAgent) generateContentWithFallback(ctx context.Context, reqData G
 				if model != a.model {
 					log.Printf("GeminiAgent.callLLM: answered by fallback model %s", model)
 				}
+				a.publishStatus(agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone, "answered by "+model)
 				return reply, nil
 			}
 			lastErr = err
 			if !isRetryableGeminiError(err) {
+				a.publishClassified(err)
 				return "", err
 			}
 			log.Printf("GeminiAgent.callLLM: %s attempt %d/%d failed: %v", model, attempt+1, a.maxAttempts, err)
@@ -795,7 +860,16 @@ func (a *GeminiAgent) generateContentWithFallback(ctx context.Context, reqData G
 			}
 		}
 	}
+	a.publishClassified(lastErr)
 	return "", lastErr
+}
+
+// publishClassified reports a failure under its category, with no detail: the
+// category is everything a peer needs, and any detail here would be built from
+// an error string.
+func (a *GeminiAgent) publishClassified(err error) {
+	health, quota, class := classifyGeminiError(err)
+	a.publishStatus(health, quota, class, "")
 }
 
 func defaultGeminiRetryDelay(attempt int) time.Duration {
