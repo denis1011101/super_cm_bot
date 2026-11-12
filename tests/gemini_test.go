@@ -14,6 +14,7 @@ import (
 	_ "unsafe"
 
 	"github.com/denis1011101/super_cm_bot/app"
+	"github.com/denis1011101/super_cm_bot/app/agentbus"
 	"github.com/denis1011101/super_cm_bot/tests/testutils"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	_ "github.com/mattn/go-sqlite3"
@@ -36,6 +37,18 @@ func extractGeminiAutoCommand(raw string) (string, string)
 
 //go:linkname randomGeminiResponseDelay github.com/denis1011101/super_cm_bot/app.randomGeminiResponseDelay
 func randomGeminiResponseDelay() time.Duration
+
+//go:linkname normalizeGeminiModel github.com/denis1011101/super_cm_bot/app.normalizeGeminiModel
+func normalizeGeminiModel(model string) string
+
+//go:linkname resolveGeminiModel github.com/denis1011101/super_cm_bot/app.resolveGeminiModel
+func resolveGeminiModel(raw string) string
+
+//go:linkname defaultGeminiFallbacks github.com/denis1011101/super_cm_bot/app.defaultGeminiFallbacks
+func defaultGeminiFallbacks(primary string) []string
+
+//go:linkname normalizeGeminiFallbackModels github.com/denis1011101/super_cm_bot/app.normalizeGeminiFallbackModels
+func normalizeGeminiFallbackModels(primary string, models []string) []string
 
 func setupGeminiDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -973,5 +986,603 @@ func TestGeminiAgentDoesNotCallOtherBotsSelf(t *testing.T) {
 	defer promptMu.Unlock()
 	if !strings.Contains(prompt, `ЧужойБот: погода сегодня ясная`) {
 		t.Fatalf("another bot must keep its name in the prompt: %s", prompt)
+	}
+}
+
+// TestGeminiAgentDefaultModelPoolRotation verifies that starting from default
+// gemini-3.7-flash with no fallback models specified walks the pool down and
+// rotates round to 3.8: 3.7 -> 3.6 -> 3.5 -> 3.5-lite -> 3.8.
+func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		if model != "gemini-3.8-flash" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ от 3.8"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.7-flash",
+		FallbackModels: nil, // default rotation from pool
+		MaxAttempts:    1,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100030)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ от 3.8" {
+		t.Fatalf("expected the answer from gemini-3.8-flash, got %q", reply)
+	}
+
+	want := []string{
+		"gemini-3.7-flash",
+		"gemini-3.6-flash",
+		"gemini-3.5-flash",
+		"gemini-3.5-flash-lite",
+		"gemini-3.8-flash",
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected models in order %v, got %v", want, models)
+	}
+}
+
+// TestGeminiAgentDefaultModelPoolRotation_FromFirstModel verifies rotation
+// starting from the first model in pool (gemini-3.8-flash).
+func TestGeminiAgentDefaultModelPoolRotation_FromFirstModel(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		if model != "gemini-3.5-flash-lite" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ от lite"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.8-flash",
+		FallbackModels: nil,
+		MaxAttempts:    1,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100031)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ от lite" {
+		t.Fatalf("expected the answer from lite, got %q", reply)
+	}
+
+	want := []string{
+		"gemini-3.8-flash",
+		"gemini-3.7-flash",
+		"gemini-3.6-flash",
+		"gemini-3.5-flash",
+		"gemini-3.5-flash-lite",
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected models in order %v, got %v", want, models)
+	}
+}
+
+// TestGeminiAgentDefaultModelPoolRotation_FromLastModel verifies rotation
+// starting from the last model in pool (gemini-3.5-flash-lite).
+func TestGeminiAgentDefaultModelPoolRotation_FromLastModel(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		if model != "gemini-3.5-flash" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ от 3.5"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.5-flash-lite",
+		FallbackModels: nil,
+		MaxAttempts:    1,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100032)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ от 3.5" {
+		t.Fatalf("expected the answer from 3.5, got %q", reply)
+	}
+
+	want := []string{
+		"gemini-3.5-flash-lite",
+		"gemini-3.8-flash",
+		"gemini-3.7-flash",
+		"gemini-3.6-flash",
+		"gemini-3.5-flash",
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected models in order %v, got %v", want, models)
+	}
+}
+
+// TestGeminiAgentModelOutsidePool_NoDefaultFallbacks verifies that a custom
+// model outside the default pool does not pull in the default pool fallbacks.
+func TestGeminiAgentModelOutsidePool_NoDefaultFallbacks(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-2.5-pro",
+		FallbackModels: nil,
+		MaxAttempts:    1,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100033)
+	msg := geminiTestMessage(chatID)
+	msg.Text = "привет"
+	if !agent.TryRespondImmediate(msg) {
+		t.Fatal("message should be processed")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(models) != 1 || models[0] != "gemini-2.5-pro" {
+		t.Fatalf("expected only gemini-2.5-pro to be called, got %v", models)
+	}
+}
+
+// TestGeminiAgentExplicitFallback_SameAsPrimary verifies that explicitly setting
+// fallback to the primary model does not trigger the default pool.
+func TestGeminiAgentExplicitFallback_SameAsPrimary(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.7-flash",
+		FallbackModels: []string{"gemini-3.7-flash"},
+		MaxAttempts:    1,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100034)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(models) != 1 || models[0] != "gemini-3.7-flash" {
+		t.Fatalf("expected only gemini-3.7-flash, got %v", models)
+	}
+}
+
+// TestGeminiAgentModelUnavailable404_SkipsDirectlyToNextModel verifies that 404
+// skips immediately to the next model without wasting retries on the missing model.
+func TestGeminiAgentModelUnavailable404_SkipsDirectlyToNextModel(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		if model == "gemini-3.7-flash" {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"code":404,"status":"NOT_FOUND","message":"models/gemini-3.7-flash is not found"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ от фолбека"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.7-flash",
+		FallbackModels: []string{"gemini-3.6-flash"},
+		MaxAttempts:    3, // 404 must not use all 3 attempts!
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100035)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ от фолбека" {
+		t.Fatalf("expected fallback reply, got %q", reply)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// gemini-3.7-flash should be called EXACTLY once (no retries on 404), then gemini-3.6-flash
+	want := []string{"gemini-3.7-flash", "gemini-3.6-flash"}
+	if strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected %v, got %v", want, models)
+	}
+}
+
+// TestGeminiAgentEmptyResponse_FallsBack verifies that an empty response (text is "")
+// does not count as a successful answer and instead falls back to the next model.
+func TestGeminiAgentEmptyResponse_FallsBack(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		if model == "gemini-3.7-flash" {
+			// Returns empty parts text
+			_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"   "}]}}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"успешный ответ"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.7-flash",
+		FallbackModels: []string{"gemini-3.6-flash"},
+		MaxAttempts:    2,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100036)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "успешный ответ" {
+		t.Fatalf("expected answer from fallback model, got %q", reply)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"gemini-3.7-flash", "gemini-3.6-flash"}
+	if strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected %v, got %v", want, models)
+	}
+}
+
+// TestGeminiAgentApiKeyInHeaderNotURL verifies that API key is passed via
+// x-goog-api-key header and not leaked in the request URL.
+func TestGeminiAgentApiKeyInHeaderNotURL(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		headerKey string
+		urlRaw    string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		headerKey = r.Header.Get("x-goog-api-key")
+		urlRaw = r.URL.String()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"секрет сохранён"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Client:     server.Client(),
+		APIKey:     "secret-gemini-key",
+		APIBaseURL: server.URL,
+		Model:      "gemini-3.7-flash",
+	})
+
+	chatID := int64(100037)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "секрет сохранён" {
+		t.Fatalf("expected reply, got %q", reply)
+	}
+
+	if headerKey != "secret-gemini-key" {
+		t.Fatalf("expected x-goog-api-key header 'secret-gemini-key', got %q", headerKey)
+	}
+	if strings.Contains(urlRaw, "secret-gemini-key") || strings.Contains(urlRaw, "key=") {
+		t.Fatalf("URL must not contain API key: %s", urlRaw)
+	}
+}
+
+// TestGeminiAgentGenericOutputCandidate verifies that candidates[0].output
+// format is correctly extracted as a valid answer.
+func TestGeminiAgentGenericOutputCandidate(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"output":"valid candidate output"}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:         db,
+		Client:     server.Client(),
+		APIKey:     "test-key",
+		APIBaseURL: server.URL,
+		Model:      "gemini-3.7-flash",
+	})
+
+	chatID := int64(100038)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "valid candidate output" {
+		t.Fatalf("expected valid candidate output, got %q", reply)
+	}
+}
+
+// TestGeminiAgentEmptyCandidatesArray_FallsBack verifies that {"candidates":[]}
+// is recognized as an empty response and triggers fallback to the next model.
+func TestGeminiAgentEmptyCandidatesArray_FallsBack(t *testing.T) {
+	db := setupGeminiDB(t)
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		mu.Lock()
+		models = append(models, model)
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		if model == "gemini-3.7-flash" {
+			_, _ = w.Write([]byte(`{"candidates":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ после пустого массива"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         server.Client(),
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.7-flash",
+		FallbackModels: []string{"gemini-3.6-flash"},
+		MaxAttempts:    1,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100039)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ после пустого массива" {
+		t.Fatalf("expected reply from fallback model, got %q", reply)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"gemini-3.7-flash", "gemini-3.6-flash"}
+	if strings.Join(models, ",") != strings.Join(want, ",") {
+		t.Fatalf("expected %v, got %v", want, models)
+	}
+}
+
+// TestGeminiAgentDeadlineExceeded_ReportsToStatusBus verifies that when a context
+// timeout occurs, the agent publishes TIMEOUT status on the status bus and halts.
+func TestGeminiAgentDeadlineExceeded_ReportsToStatusBus(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// simulate client timeout
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	client := &http.Client{Timeout: 10 * time.Millisecond}
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:             db,
+		Client:         client,
+		APIKey:         "test-key",
+		APIBaseURL:     server.URL,
+		Model:          "gemini-3.7-flash",
+		FallbackModels: []string{"gemini-3.6-flash"},
+		MaxAttempts:    1,
+		RetryDelay:     func(int) time.Duration { return 0 },
+	})
+
+	registry := agentbus.NewRegistry(time.Minute)
+	agent.SetStatusBus(registry, "timeout_bot")
+	_, _ = registry.Report("timeout_bot", agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone, "initial")
+
+	chatID := int64(100040)
+	if !agent.TryRespondImmediate(geminiTestMessage(chatID)) {
+		t.Fatal("message should be processed")
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	status, ok := registry.Get("timeout_bot")
+	if !ok {
+		t.Fatal("status should be registered")
+	}
+	if status.ErrorClass != "TIMEOUT" {
+		t.Fatalf("expected errorClass TIMEOUT, got %q", status.ErrorClass)
+	}
+	if status.Health != "degraded" {
+		t.Fatalf("expected health degraded, got %q", status.Health)
+	}
+}
+
+// TestGeminiModelResolution_EdgeCases tests edge cases for model normalization,
+// resolution, default fallbacks rotation, and fallback filtering.
+func TestGeminiModelResolution_EdgeCases(t *testing.T) {
+	// resolveGeminiModel defaults
+	if got := resolveGeminiModel(""); got != "gemini-3.7-flash" {
+		t.Fatalf("empty model should default to gemini-3.7-flash, got %q", got)
+	}
+	if got := resolveGeminiModel("   "); got != "gemini-3.7-flash" {
+		t.Fatalf("whitespace model should default to gemini-3.7-flash, got %q", got)
+	}
+	if got := resolveGeminiModel("not-gemini-model"); got != "gemini-3.7-flash" {
+		t.Fatalf("invalid model should default to gemini-3.7-flash, got %q", got)
+	}
+	if got := resolveGeminiModel("models/gemini-3.8-flash-latest"); got != "gemini-3.8-flash" {
+		t.Fatalf("expected normalized gemini-3.8-flash, got %q", got)
+	}
+
+	// defaultGeminiFallbacks rotation
+	want37 := []string{"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"}
+	got37 := defaultGeminiFallbacks("gemini-3.7-flash")
+	if strings.Join(got37, ",") != strings.Join(want37, ",") {
+		t.Fatalf("default fallbacks for 3.7: got %v want %v", got37, want37)
+	}
+
+	// Model outside pool has no default fallbacks
+	if got := defaultGeminiFallbacks("gemini-2.5-pro"); got != nil {
+		t.Fatalf("model outside pool should have nil fallbacks, got %v", got)
+	}
+
+	// normalizeGeminiFallbackModels edge cases
+	if got := normalizeGeminiFallbackModels("gemini-3.7-flash", []string{" "}); len(got) != 0 {
+		t.Fatalf("whitespace fallback should be dropped, got %v", got)
+	}
+	if got := normalizeGeminiFallbackModels("gemini-3.7-flash", []string{"garbage"}); len(got) != 0 {
+		t.Fatalf("garbage fallback should be dropped, got %v", got)
+	}
+	if got := normalizeGeminiFallbackModels("gemini-3.7-flash", []string{"gemini-3.7-flash"}); len(got) != 0 {
+		t.Fatalf("fallback matching primary should be dropped, got %v", got)
+	}
+	mixed := normalizeGeminiFallbackModels("gemini-3.7-flash", []string{
+		"models/gemini-3.6-flash-latest",
+		"gemini-3.6-flash",
+		"garbage",
+		"gemini-3.5-flash",
+	})
+	wantMixed := []string{"gemini-3.6-flash", "gemini-3.5-flash"}
+	if strings.Join(mixed, ",") != strings.Join(wantMixed, ",") {
+		t.Fatalf("expected %v, got %v", wantMixed, mixed)
 	}
 }
