@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"log"
 	"math/rand"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,12 +15,18 @@ import (
 	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
+	"github.com/denis1011101/super_cm_bot/app/agentbus"
 	"github.com/denis1011101/super_cm_bot/app/handlers"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
+
+// agentBusTTL is how long a published status stays current. It is a few times
+// the bot's own reporting cadence, so a peer is marked stale only after it has
+// genuinely stopped talking, not after one slow call.
+const agentBusTTL = 15 * time.Minute
 
 // klewoRe матчит паттерн "@юзер клево/клёво" с необязательными знаками препинания в конце
 var klewoRe = regexp.MustCompile(`@\S+\s+кл[её]во[!?]?`)
@@ -54,22 +62,7 @@ func main() {
 		log.Printf("Failed to set SQLITE_TRACE_FILE env: %v", err)
 	}
 
-	// Открываем файл для записи логов
-	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
-	}
-	defer func() {
-		if err := logFile.Close(); err != nil {
-			log.Printf("Error closing log file: %v", err)
-		}
-	}()
-
-	// Настраиваем логгер для записи в файл
-	log.SetOutput(logFile)
-
-	err = godotenv.Load()
-	if err != nil {
+	if err := godotenv.Load(); err != nil {
 		log.Fatalf("Error loading .env file")
 	}
 
@@ -139,6 +132,7 @@ func main() {
 	app.StartGeminiMemoryCleanupRoutine(db, nil)
 
 	geminiAgent := app.NewGeminiAgent(db, bot)
+	startAgentBus(geminiAgent, bot.Self.UserName)
 	geminiAgent.SetAutoCommandHandler(func(source tgbotapi.Message, cmd string) {
 		synthetic := source
 		synthetic.Text = cmd
@@ -178,6 +172,11 @@ func main() {
 
 	// Обработка обновлений
 	for update := range updates {
+		if update.MyChatMember != nil { // Обработка добавления бота в чат
+			handlers.HandleBotAddition(update, bot)
+			continue
+		}
+
 		if update.Message != nil {
 			chatID := update.Message.Chat.ID
 			if chatID == specificChatID {
@@ -224,10 +223,64 @@ func main() {
 						_ = geminiAgent.TryRespond(update, specificChatID)
 					}
 				}
-
-			} else if update.MyChatMember != nil { // Обработка добавления бота в чат
-				handlers.HandleBotAddition(update, bot)
 			}
 		}
 	}
+}
+
+// startAgentBus exposes the shared status board over MCP and points this bot's
+// own reporting at it. It is opt-in: with MCP_ADDR unset the bot behaves
+// exactly as before.
+func startAgentBus(agent *app.GeminiAgent, defaultName string) {
+	addr := strings.TrimSpace(os.Getenv("MCP_ADDR"))
+	if addr == "" {
+		return
+	}
+
+	auth, err := agentbus.ParseAuth(os.Getenv("MCP_TOKENS"))
+	if err != nil {
+		// Refusing to serve is the safe failure: an unauthenticated board is
+		// one any caller could poison with false quota reports.
+		log.Printf("agentbus: not starting, MCP_TOKENS is unusable: %v", err)
+		return
+	}
+
+	selfName := strings.TrimSpace(os.Getenv("MCP_SELF"))
+	if selfName == "" {
+		selfName = defaultName
+	}
+
+	reg := agentbus.NewRegistry(agentBusTTL)
+	agent.SetStatusBus(reg, selfName)
+
+	if host, _, splitErr := net.SplitHostPort(addr); splitErr == nil && !isLoopbackHost(host) {
+		log.Printf("agentbus: %s is not loopback - bearer tokens will cross the network in clear "+
+			"unless a TLS terminating proxy sits in front of it", addr)
+	}
+
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           agentbus.Handler(reg, auth),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	log.Printf("agentbus: serving MCP on %s as %q for %v", addr, selfName, auth.Bots())
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("agentbus: server stopped: %v", err)
+		}
+	}()
+}
+
+// isLoopbackHost reports whether an MCP_ADDR host part keeps traffic on the machine.
+func isLoopbackHost(host string) bool {
+	if host == "" {
+		// A bare ":8765" listens on every interface.
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

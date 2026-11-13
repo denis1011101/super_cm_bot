@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/denis1011101/super_cm_bot/app/agentbus"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -33,7 +34,18 @@ const (
 	geminiDelayRange   = 2 * time.Second
 	geminiMaxAttempts  = 3
 	geminiRetryBackoff = time.Second
+	defaultGeminiModel = "gemini-3.7-flash"
 )
+
+var defaultGeminiPool = []string{
+	"gemini-3.8-flash",
+	"gemini-3.7-flash",
+	"gemini-3.6-flash",
+	"gemini-3.5-flash",
+	"gemini-3.5-flash-lite",
+}
+
+var errEmptyGeminiResponse = errors.New("empty response from Gemini")
 
 type SearchAdapter interface {
 	ShouldSearch(userText string) bool
@@ -124,6 +136,12 @@ type GeminiAgent struct {
 	maxAttempts    int
 	retryDelay     func(attempt int) time.Duration
 
+	// busMu guards the status bus only. It is deliberately not mu: publishing
+	// happens on the LLM path, which is sometimes reached while mu is held.
+	busMu    sync.Mutex
+	bus      *agentbus.Registry
+	selfName string
+
 	mu               sync.Mutex
 	geminiLast       map[int64]time.Time
 	autoCommandLast  map[int64]time.Time
@@ -131,11 +149,15 @@ type GeminiAgent struct {
 }
 
 func NewGeminiAgent(db *sql.DB, bot *tgbotapi.BotAPI) *GeminiAgent {
+	var fallbackModels []string
+	if raw, ok := os.LookupEnv("GEMINI_FALLBACK_MODEL"); ok {
+		fallbackModels = strings.Split(raw, ",")
+	}
 	return NewGeminiAgentWithConfig(GeminiAgentConfig{
 		DB:             db,
 		Bot:            bot,
 		Model:          os.Getenv("GEMINI_MODEL"),
-		FallbackModels: strings.Split(os.Getenv("GEMINI_FALLBACK_MODEL"), ","),
+		FallbackModels: fallbackModels,
 		APIKey:         os.Getenv("GEMINI_API_KEY"),
 	})
 }
@@ -153,10 +175,7 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 	if search == nil {
 		search = GeminiGoogleSearchAdapter{}
 	}
-	model := normalizeGeminiModel(cfg.Model)
-	if model == "" {
-		model = "gemini-2.5-flash"
-	}
+	model := resolveGeminiModel(cfg.Model)
 	apiBaseURL := strings.TrimRight(cfg.APIBaseURL, "/")
 	if apiBaseURL == "" {
 		apiBaseURL = "https://generativelanguage.googleapis.com"
@@ -173,7 +192,12 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 	if responseDelay == nil {
 		responseDelay = randomGeminiResponseDelay
 	}
-	fallbackModels := normalizeGeminiFallbackModels(model, cfg.FallbackModels)
+	var fallbackModels []string
+	if cfg.FallbackModels == nil {
+		fallbackModels = defaultGeminiFallbacks(model)
+	} else {
+		fallbackModels = normalizeGeminiFallbackModels(model, cfg.FallbackModels)
+	}
 	maxAttempts := cfg.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = geminiMaxAttempts
@@ -209,6 +233,61 @@ func (a *GeminiAgent) SetAutoCommandHandler(handler GeminiAutoCommandHandler) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.autoCommand = handler
+}
+
+// SetStatusBus makes the agent publish its own health and quota under selfName,
+// so peer bots can learn that this one is out of budget without waiting for a
+// Telegram message that may never be delivered.
+func (a *GeminiAgent) SetStatusBus(reg *agentbus.Registry, selfName string) {
+	a.busMu.Lock()
+	defer a.busMu.Unlock()
+	a.bus, a.selfName = reg, selfName
+}
+
+// publishStatus is best effort: the board going wrong must never take the bot
+// down with it, so failures are logged and swallowed.
+func (a *GeminiAgent) publishStatus(health agentbus.Health, quota agentbus.Quota, errClass, detail string) {
+	a.busMu.Lock()
+	bus, self := a.bus, a.selfName
+	a.busMu.Unlock()
+	if bus == nil || self == "" {
+		return
+	}
+	if _, err := bus.Report(self, health, quota, errClass, detail); err != nil {
+		log.Printf("GeminiAgent.publishStatus: %v", err)
+	}
+}
+
+// classifyGeminiError turns a failure into the closed set peers understand.
+// The error text itself is never forwarded: it can contain the request URL,
+// which carries the API key.
+func classifyGeminiError(err error) (agentbus.Health, agentbus.Quota, string) {
+	if err == nil {
+		return agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone
+	}
+
+	var apiErr *geminiAPIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusTooManyRequests:
+			return agentbus.HealthDegraded, agentbus.QuotaExhausted, agentbus.ErrResourceExausted
+		case http.StatusInternalServerError, http.StatusBadGateway,
+			http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrUpstreamDown
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return agentbus.HealthDown, agentbus.QuotaUnknown, agentbus.ErrConfig
+		default:
+			return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrOther
+		}
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrTimeout
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrUpstreamDown
+	}
+	return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrOther
 }
 
 func (a *GeminiAgent) TryRespond(update tgbotapi.Update, targetChatID int64) bool {
@@ -736,6 +815,7 @@ type GeminiResponse struct {
 
 func (a *GeminiAgent) callLLM(ctx context.Context, systemPrompt, userPrompt, searchQuery string, useSearch bool) (string, error) {
 	if a.apiKey == "" {
+		a.publishStatus(agentbus.HealthDown, agentbus.QuotaUnknown, agentbus.ErrConfig, "GEMINI_API_KEY is not set")
 		return "", errors.New("GEMINI_API_KEY is not set")
 	}
 
@@ -780,12 +860,35 @@ func (a *GeminiAgent) generateContentWithFallback(ctx context.Context, reqData G
 				if model != a.model {
 					log.Printf("GeminiAgent.callLLM: answered by fallback model %s", model)
 				}
+				a.publishStatus(agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone, "answered by "+model)
 				return reply, nil
 			}
 			lastErr = err
-			if !isRetryableGeminiError(err) {
+
+			if errors.Is(err, context.Canceled) {
 				return "", err
 			}
+
+			if errors.Is(err, context.DeadlineExceeded) {
+				a.publishClassified(err)
+				return "", err
+			}
+
+			if isModelUnavailableGeminiError(err) {
+				log.Printf("GeminiAgent.callLLM: model %s unavailable (404), switching to next model: %v", model, err)
+				break
+			}
+
+			if errors.Is(err, errEmptyGeminiResponse) {
+				log.Printf("GeminiAgent.callLLM: model %s returned empty response, switching to next model", model)
+				break
+			}
+
+			if !isRetryableGeminiError(err) {
+				a.publishClassified(err)
+				return "", err
+			}
+
 			log.Printf("GeminiAgent.callLLM: %s attempt %d/%d failed: %v", model, attempt+1, a.maxAttempts, err)
 			if attempt == a.maxAttempts-1 {
 				break
@@ -795,7 +898,16 @@ func (a *GeminiAgent) generateContentWithFallback(ctx context.Context, reqData G
 			}
 		}
 	}
+	a.publishClassified(lastErr)
 	return "", lastErr
+}
+
+// publishClassified reports a failure under its category, with no detail: the
+// category is everything a peer needs, and any detail here would be built from
+// an error string.
+func (a *GeminiAgent) publishClassified(err error) {
+	health, quota, class := classifyGeminiError(err)
+	a.publishStatus(health, quota, class, "")
 }
 
 func defaultGeminiRetryDelay(attempt int) time.Duration {
@@ -855,6 +967,14 @@ func isRetryableGeminiError(err error) bool {
 	return errors.As(err, &netErr)
 }
 
+func isModelUnavailableGeminiError(err error) bool {
+	var apiErr *geminiAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusNotFound
+	}
+	return false
+}
+
 func (a *GeminiAgent) executeGenerateContent(ctx context.Context, reqData GeminiRequest) (string, error) {
 	return a.executeGenerateContentWithModel(ctx, a.model, reqData)
 }
@@ -870,6 +990,9 @@ func (a *GeminiAgent) executeGenerateContentWithModel(ctx context.Context, model
 		return "", fmt.Errorf("build gemini request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if a.apiKey != "" {
+		req.Header.Set("x-goog-api-key", a.apiKey)
+	}
 
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -890,19 +1013,51 @@ func (a *GeminiAgent) executeGenerateContentWithModel(ctx context.Context, model
 	}
 
 	var gr GeminiResponse
-	if err := json.Unmarshal(body, &gr); err == nil {
-		if len(gr.Candidates) > 0 && len(gr.Candidates[0].Content.Parts) > 0 {
-			return strings.TrimSpace(gr.Candidates[0].Content.Parts[0].Text), nil
+	if err := json.Unmarshal(body, &gr); err == nil && len(gr.Candidates) > 0 && len(gr.Candidates[0].Content.Parts) > 0 {
+		text := strings.TrimSpace(gr.Candidates[0].Content.Parts[0].Text)
+		if text != "" {
+			return text, nil
 		}
 	}
 	if s := parseTextFromGenericResponse(body); s != "" {
 		return s, nil
 	}
-	return "", errors.New("empty response from Gemini")
+	return "", errEmptyGeminiResponse
 }
 
 func (a *GeminiAgent) generateContentURL(model string) string {
-	return a.apiBaseURL + "/v1beta/models/" + model + ":generateContent?key=" + a.apiKey
+	return a.apiBaseURL + "/v1beta/models/" + model + ":generateContent"
+}
+
+func resolveGeminiModel(raw string) string {
+	m := normalizeGeminiModel(raw)
+	if m == "" {
+		return defaultGeminiModel
+	}
+	return m
+}
+
+// defaultGeminiFallbacks returns the remaining models from defaultGeminiPool
+// rotated around the primary model (starting immediately after primary and
+// wrapping around), matching aireview's pool rotation. If primary is outside
+// defaultGeminiPool, no default fallbacks are assumed (single-model chain).
+func defaultGeminiFallbacks(primary string) []string {
+	idx := -1
+	for i, m := range defaultGeminiPool {
+		if m == primary {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return nil
+	}
+	n := len(defaultGeminiPool)
+	fallbacks := make([]string, 0, n-1)
+	for i := 1; i < n; i++ {
+		fallbacks = append(fallbacks, defaultGeminiPool[(idx+i)%n])
+	}
+	return fallbacks
 }
 
 // normalizeGeminiFallbackModels keeps the configured order, drops blanks,
@@ -930,7 +1085,7 @@ func normalizeGeminiModel(model string) string {
 	model = strings.TrimPrefix(model, "models/")
 	model = strings.TrimSuffix(model, "-latest")
 	if !strings.HasPrefix(model, "gemini-") {
-		return "gemini-2.5-flash"
+		return ""
 	}
 	return model
 }
@@ -972,24 +1127,27 @@ func parseTextFromGenericResponse(b []byte) string {
 			}
 		}
 	}
-	if cands, ok := out["candidates"].([]interface{}); ok && len(cands) > 0 {
-		if c0, ok := cands[0].(map[string]interface{}); ok {
-			if content, ok := c0["content"].(map[string]interface{}); ok {
-				if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
-					if p0, ok := parts[0].(map[string]interface{}); ok {
-						if txt, ok := p0["text"].(string); ok && strings.TrimSpace(txt) != "" {
-							return strings.TrimSpace(txt)
+	if cands, ok := out["candidates"].([]interface{}); ok {
+		if len(cands) > 0 {
+			if c0, ok := cands[0].(map[string]interface{}); ok {
+				if content, ok := c0["content"].(map[string]interface{}); ok {
+					if parts, ok := content["parts"].([]interface{}); ok && len(parts) > 0 {
+						if p0, ok := parts[0].(map[string]interface{}); ok {
+							if txt, ok := p0["text"].(string); ok && strings.TrimSpace(txt) != "" {
+								return strings.TrimSpace(txt)
+							}
 						}
 					}
 				}
-			}
-			if outStr, ok := c0["output"].(string); ok && strings.TrimSpace(outStr) != "" {
-				return strings.TrimSpace(outStr)
-			}
-			if contStr, ok := c0["content"].(string); ok && strings.TrimSpace(contStr) != "" {
-				return strings.TrimSpace(contStr)
+				if outStr, ok := c0["output"].(string); ok && strings.TrimSpace(outStr) != "" {
+					return strings.TrimSpace(outStr)
+				}
+				if contStr, ok := c0["content"].(string); ok && strings.TrimSpace(contStr) != "" {
+					return strings.TrimSpace(contStr)
+				}
 			}
 		}
+		return ""
 	}
 	if outputs, ok := out["output"].([]interface{}); ok && len(outputs) > 0 {
 		if o0, ok := outputs[0].(map[string]interface{}); ok {
