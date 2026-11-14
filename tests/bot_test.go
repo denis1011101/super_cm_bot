@@ -260,3 +260,43 @@ func TestSendMessageWithoutMemoryDoesNotRecord(t *testing.T) {
 		t.Fatalf("Expected empty memory, got %q", context)
 	}
 }
+
+// TestRefreshUsernames_UpdatesWithSingleConnection — регрессия: UPDATE внутри RefreshUsernames
+// не должен блокироваться на единственном соединении пула (MaxOpenConns=1).
+func TestRefreshUsernames_UpdatesWithSingleConnection(t *testing.T) {
+	db := setupBotDB(t)
+	insertPen(t, db, 1, 100, nil)
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			body := `{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`
+			if strings.Contains(r.URL.Path, "/getChatMember") {
+				body = `{"ok":true,"result":{"status":"member","user":{"id":1,"is_bot":false,"first_name":"U","username":"new_name"}}}`
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		}),
+	}
+	bot, err := tgbotapi.NewBotAPIWithClient("fake-token", "https://telegram.test/bot%s/%s", client)
+	if err != nil {
+		t.Fatalf("mock bot: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- app.RefreshUsernames(db, bot) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RefreshUsernames: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RefreshUsernames deadlocked")
+	}
+
+	var name string
+	if err := db.QueryRow("SELECT pen_name FROM pens WHERE tg_pen_id = 1").Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "new_name" {
+		t.Fatalf("pen_name = %q, want new_name", name)
+	}
+}
