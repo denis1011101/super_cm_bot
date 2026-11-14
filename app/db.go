@@ -278,7 +278,7 @@ func UpdateGiga(db *sql.DB, newSize int, userID int64, chatID int64) error {
 		log.Printf("Error starting transaction: %v", err)
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op после Commit
 
 	_, err = tx.Exec("UPDATE pens SET pen_length = ?, handsome_count = handsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
 	if err != nil {
@@ -324,7 +324,7 @@ func UpdateUnhandsome(db *sql.DB, newSize int, userID int64, chatID int64) error
 		log.Printf("Error starting transaction: %v", err)
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }() // no-op после Commit
 
 	_, err = tx.Exec("UPDATE pens SET pen_length = ?, unhandsome_count = unhandsome_count + 1 WHERE tg_pen_id = ? AND tg_chat_id = ?", newSize, userID, chatID)
 	if err != nil {
