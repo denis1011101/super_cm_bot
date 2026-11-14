@@ -23,18 +23,19 @@ import (
 )
 
 const (
-	geminiMinCooldown  = 60 * time.Minute
-	geminiMaxExtra     = 80 * time.Minute
-	geminiMemoryWindow = 24 * time.Hour
-	geminiMemoryLimit  = 20
-	geminiAutoCmdMin   = 10
-	geminiAutoCmdMax   = 20
-	geminiAutoCmdGap   = 2 * time.Hour
-	geminiDelayMin     = 2 * time.Second
-	geminiDelayRange   = 2 * time.Second
-	geminiMaxAttempts  = 3
-	geminiRetryBackoff = time.Second
-	defaultGeminiModel = "gemini-3.7-flash"
+	geminiMinCooldown        = 60 * time.Minute
+	geminiMaxExtra           = 80 * time.Minute
+	geminiMemoryWindow       = 24 * time.Hour
+	geminiMemoryLimit        = 20
+	geminiAutoCmdMin         = 10
+	geminiAutoCmdMax         = 20
+	geminiAutoCmdGap         = 2 * time.Hour
+	defaultGeminiCmdCooldown = 4 * time.Hour
+	geminiDelayMin           = 2 * time.Second
+	geminiDelayRange         = 2 * time.Second
+	geminiMaxAttempts        = 3
+	geminiRetryBackoff       = time.Second
+	defaultGeminiModel       = "gemini-3.7-flash"
 )
 
 var defaultGeminiPool = []string{
@@ -132,6 +133,7 @@ type GeminiAgent struct {
 	memoryWindow   time.Duration
 	memoryLimit    int
 	autoCommand    GeminiAutoCommandHandler
+	spinCooldown   time.Duration
 	responseDelay  func() time.Duration
 	maxAttempts    int
 	retryDelay     func(attempt int) time.Duration
@@ -220,6 +222,7 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 		memoryWindow:     memoryWindow,
 		memoryLimit:      memoryLimit,
 		autoCommand:      cfg.AutoCommandHandler,
+		spinCooldown:     defaultGeminiCmdCooldown,
 		responseDelay:    responseDelay,
 		maxAttempts:      maxAttempts,
 		retryDelay:       retryDelay,
@@ -233,6 +236,16 @@ func (a *GeminiAgent) SetAutoCommandHandler(handler GeminiAutoCommandHandler) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.autoCommand = handler
+}
+
+// SetSpinCooldown applies the same command cooldown used by manual handlers.
+func (a *GeminiAgent) SetSpinCooldown(cooldown time.Duration) {
+	if cooldown <= 0 {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.spinCooldown = cooldown
 }
 
 // SetStatusBus makes the agent publish its own health and quota under selfName,
@@ -564,7 +577,10 @@ func (a *GeminiAgent) canExecuteAutoCommand(chatID int64, cmd string) bool {
 	if lastUpdate.IsZero() {
 		return true
 	}
-	return a.now().Sub(lastUpdate) >= 4*time.Hour
+	a.mu.Lock()
+	cooldown := a.spinCooldown
+	a.mu.Unlock()
+	return a.now().Sub(lastUpdate) >= cooldown
 }
 
 // memorySpeakerName — имя, под которым человек виден Gemini в истории чата.

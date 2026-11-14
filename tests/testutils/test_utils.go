@@ -1,7 +1,6 @@
 package testutils
 
 import (
-	"bytes"
 	"database/sql"
 	"os"
 	"regexp"
@@ -91,7 +90,7 @@ type PenInfo struct {
 }
 
 // ExtractPenInfoFromLogs извлекает длину pen из логов
-func ExtractPenInfoFromLogs(t *testing.T, logBuffer *bytes.Buffer, mode string) (PenInfo, error) {
+func ExtractPenInfoFromLogs(t *testing.T, logBuffer interface{ String() string }, mode string) (PenInfo, error) {
 	logs := logBuffer.String()
 	t.Log("Logs content:", logs)
 

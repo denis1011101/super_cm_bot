@@ -26,6 +26,23 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
+type synchronizedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
 func TestMain(m *testing.M) {
 	// Установка фиктивного токена
 	if err := os.Setenv("BOT_TOKEN", "fake-token"); err != nil {
@@ -122,9 +139,12 @@ func TestBotE2E(t *testing.T) {
 		t.Fatalf("Error creating bot: %v", err)
 	}
 
-	// Перенаправляем логи в буфер
-	var logBuffer bytes.Buffer
+	// Перенаправляем логи в потокобезопасный буфер: обработчик пишет в него
+	// из отдельной горутины, а подтесты периодически читают накопленные логи.
+	var logBuffer synchronizedBuffer
+	previousLogOutput := log.Writer()
 	log.SetOutput(&logBuffer)
+	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
 
 	// Создаем канал обновлений
 	updates := make(chan tgbotapi.Update, 1)

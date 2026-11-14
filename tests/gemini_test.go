@@ -50,6 +50,9 @@ func defaultGeminiFallbacks(primary string) []string
 //go:linkname normalizeGeminiFallbackModels github.com/denis1011101/super_cm_bot/app.normalizeGeminiFallbackModels
 func normalizeGeminiFallbackModels(primary string, models []string) []string
 
+//go:linkname geminiAgentCanExecuteAutoCommand github.com/denis1011101/super_cm_bot/app.(*GeminiAgent).canExecuteAutoCommand
+func geminiAgentCanExecuteAutoCommand(a *app.GeminiAgent, chatID int64, cmd string) bool
+
 func setupGeminiDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -200,6 +203,34 @@ func TestExtractGeminiAutoCommand(t *testing.T) {
 	}
 	if cmd != "/giga" {
 		t.Fatalf("cmd: got %q want %q", cmd, "/giga")
+	}
+}
+
+func TestGeminiAgentAutoCommand_UsesConfiguredCooldown(t *testing.T) {
+	db := setupGeminiDB(t)
+	now := time.Date(2026, time.November, 15, 12, 0, 0, 0, time.UTC)
+	lastUpdate := now.Add(-5 * time.Second).Format("2006-01-02 15:04:05Z07:00")
+	chatID := int64(100042)
+
+	_, err := db.Exec(`
+		INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, handsome_last_update_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, "tester", 12345, chatID, 5, 0, lastUpdate)
+	if err != nil {
+		t.Fatalf("insert test command timestamp: %v", err)
+	}
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:  db,
+		Now: func() time.Time { return now },
+	})
+	if geminiAgentCanExecuteAutoCommand(agent, chatID, "/giga") {
+		t.Fatal("default production cooldown should block a command run 5 seconds ago")
+	}
+
+	agent.SetSpinCooldown(4 * time.Second)
+	if !geminiAgentCanExecuteAutoCommand(agent, chatID, "/giga") {
+		t.Fatal("configured development cooldown should allow a command run 5 seconds ago")
 	}
 }
 

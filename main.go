@@ -139,6 +139,7 @@ func main() {
 	app.StartGeminiMemoryCleanupRoutine(db, nil)
 
 	geminiAgent := app.NewGeminiAgent(db, bot)
+	geminiAgent.SetSpinCooldown(runtimeConfig.SpinCooldown())
 	startAgentBus(geminiAgent, bot.Self.UserName)
 	geminiAgent.SetAutoCommandHandler(func(source tgbotapi.Message, cmd string) {
 		synthetic := source
