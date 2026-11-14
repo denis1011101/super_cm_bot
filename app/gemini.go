@@ -836,6 +836,7 @@ func (a *GeminiAgent) callLLM(ctx context.Context, systemPrompt, userPrompt, sea
 			reqData.Tools = searchReq.Tools
 			reply, err := a.executeGenerateContent(ctx, reqData)
 			if err == nil {
+				a.publishStatus(agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone, "answered by "+a.model)
 				return reply, nil
 			}
 			log.Printf("GeminiAgent.callLLM: search request FAILED, retrying without tools: %v", err)

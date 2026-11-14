@@ -1536,6 +1536,59 @@ func TestGeminiAgentDeadlineExceeded_ReportsToStatusBus(t *testing.T) {
 	}
 }
 
+// TestGeminiAgentSearchSuccess_PublishesRecoveredStatus verifies that a successful
+// search-enabled request (which returns before generateContentWithFallback) still
+// clears a previously published failure on the status bus.
+func TestGeminiAgentSearchSuccess_PublishesRecoveredStatus(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	var sawTools atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "google_search") {
+			sawTools.Store(true)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ с поиском"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:          db,
+		Client:      server.Client(),
+		APIKey:      "test-key",
+		APIBaseURL:  server.URL,
+		Model:       "gemini-2.5-flash",
+		MaxAttempts: 1,
+		RetryDelay:  func(int) time.Duration { return 0 },
+	})
+
+	registry := agentbus.NewRegistry(time.Minute)
+	agent.SetStatusBus(registry, "search_bot")
+	_, _ = registry.Report("search_bot", agentbus.HealthDown, agentbus.QuotaExhausted, agentbus.ErrUpstreamDown, "")
+
+	chatID := int64(100041)
+	msg := geminiTestMessage(chatID)
+	msg.Text = "кто сейчас президент?"
+	if !agent.TryRespondImmediate(msg) {
+		t.Fatal("message should be processed")
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ с поиском" {
+		t.Fatalf("unexpected reply %q", reply)
+	}
+	if !sawTools.Load() {
+		t.Fatal("expected a search-enabled request")
+	}
+
+	status, ok := registry.Get("search_bot")
+	if !ok {
+		t.Fatal("status should be registered")
+	}
+	if status.Health != agentbus.HealthOK || status.Quota != agentbus.QuotaOK || status.ErrorClass != agentbus.ErrNone {
+		t.Fatalf("expected recovered status, got %+v", status)
+	}
+}
+
 // TestGeminiModelResolution_EdgeCases tests edge cases for model normalization,
 // resolution, default fallbacks rotation, and fallback filtering.
 func TestGeminiModelResolution_EdgeCases(t *testing.T) {
