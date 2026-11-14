@@ -5,44 +5,31 @@ import (
 	"fmt"
 	"log"
 	"time"
-	"os"
 
 	"github.com/denis1011101/super_cm_bot/app"
+	"github.com/denis1011101/super_cm_bot/app/config"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+var runtimeConfig config.Config
+
+// SetRuntimeConfig applies the validated configuration during application startup.
+func SetRuntimeConfig(cfg config.Config) {
+	runtimeConfig = cfg
+}
 
 func checkIsSpinNotLegal(lastUpdate time.Time) bool {
 	if !lastUpdate.IsZero() {
 		duration := time.Since(lastUpdate)
-		lastUpdateIsToday := compareTimesByDate(time.Now(), lastUpdate)
+		cooldown := runtimeConfig.SpinCooldown()
 
-		environment := os.Getenv("ENVIRONMENT")
-		if environment == "" {
-			log.Fatalf("BOT_NAME is not set in .env file")
-		}
-
-		if environment == "development" || environment == "test" {
-			if duration.Seconds() < 4 && lastUpdateIsToday {
-				log.Println("Spin is not legal: less than 4 seconds since last update and it's today")
-				return true
-			}
-		}
-
-		if environment == "production" {
-			if duration.Hours() < 4 && lastUpdateIsToday {
-				log.Println("Spin is not legal: less than 4 hours since last update and it's today")
-				return true
-			}
+		if duration < cooldown {
+			log.Printf("Spin is not legal: less than %s since last update", cooldown)
+			return true
 		}
 	}
 	log.Println("Spin is legal")
 	return false
-}
-
-func compareTimesByDate(a, b time.Time) bool {
-	return a.Year() == b.Year() &&
-		a.Month() == b.Month() &&
-		a.Day() == b.Day()
 }
 
 func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendWelcomeMessage bool) {
@@ -53,14 +40,18 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 
 	// Подготовка запроса для вставки пользователя в базу данных
 	stmt, err := db.Prepare(`
-		INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count)
-		VALUES (?, ?, ?, ?, 0, 0)
+		INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count, pen_last_update_at)
+		VALUES (?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP)
 	`)
 	if err != nil {
 		log.Printf("Error preparing insert statement: %v", err)
 		return
 	}
-	defer stmt.Close()
+	defer func() {
+		if closeErr := stmt.Close(); closeErr != nil {
+			log.Printf("Error closing statement: %v", closeErr)
+		}
+	}()
 
 	// Выполнение подготовленного запроса с параметрами и добавление 5 см к размеру пениса
 	_, err = stmt.Exec(userName, userID, chatID, 5)
@@ -75,4 +66,14 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 	}
 
 	fmt.Println("User registered in bot")
+}
+
+// isUserJoinEvent проверяет, является ли сообщение событием входа пользователя в чат
+func isUserJoinEvent(update tgbotapi.Update) bool {
+	return update.Message.NewChatMembers != nil
+}
+
+// isUserLeaveEvent проверяет, является ли сообщение событием выхода пользователя из чата
+func isUserLeaveEvent(update tgbotapi.Update) bool {
+	return update.Message.LeftChatMember != nil
 }

@@ -3,11 +3,16 @@ package handlers
 import (
 	"database/sql"
 	"log"
+	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
 	messagegenerators "github.com/denis1011101/super_cm_bot/app/handlers/message_generators"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+func normalizeUnhandsomeDiffSize(diffSize int) int {
+	return min(diffSize, -1)
+}
 
 func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	userID := update.Message.From.ID
@@ -26,6 +31,9 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 		registerBot(update, bot, db, true)
 	}
 
+	now := time.Now()
+	isHoliday := (now.Month() == time.December && now.Day() >= 24) || (now.Month() == time.January && now.Day() <= 2)
+
 	// Получение времени последнего обновления
 	lastUpdate, err := app.GetUnhandsomeLastUpdateTime(db, chatID)
 	if err != nil {
@@ -41,8 +49,10 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 
 	// Проводим ролл на пропуск выбора пидора дня
 	if app.SpinSkipAction() {
-		app.UpdateUnhandsomeLastUpdate(db, chatID)
-		message := messagegenerators.GetSkipUnhandsomeMessage()
+		if err := app.UpdateUnhandsomeLastUpdate(db, chatID); err != nil {
+			log.Printf("Error updating unhandsome last update: %v", err)
+		}
+		message := messagegenerators.GetSkipUnhandsomeMessage(isHoliday)
 		app.SendMessage(chatID, message, bot, update.Message.MessageID)
 		return
 	}
@@ -62,7 +72,6 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	// Выбор случайного участника
 	randomMember := app.SelectRandomMember(members)
 
-
 	// Получение текущего размера пениса выбранного участника
 	pen, err := app.GetUserPen(db, randomMember.ID, chatID)
 	if err != nil {
@@ -77,13 +86,19 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 
 	// Вычисление нового размера
 	result := app.SpinDiffPenSize(pen)
+	if result.ResultType != "RESET" {
+		result.Size = normalizeUnhandsomeDiffSize(result.Size) // гарантируем уменьшение минимум на 1
+	}
 	newSize := pen.Size + result.Size
 
 	// Обновление значения у выигравшего участника и времени последнего обновления у всех участников
-	app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID)
+	if err := app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID); err != nil {
+		log.Printf("Error updating unhandsome in database: %v", err)
+		return
+	}
 
 	// Генерируем сообщение для чата
-	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize)
+	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize, isHoliday)
 
 	// Отправка сообщения с именем выбранного "антикрасавчика"
 	app.SendMessage(chatID, message, bot, update.Message.MessageID)

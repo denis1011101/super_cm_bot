@@ -21,7 +21,8 @@ go mod download
 3. Create a `.env` file based on `.env_example` and add the following:
 ```sh
 cp .env_example .env
-# Open .env and add BOT_TOKEN, BOT_NAME, SPECIFIC_CHAT_ID and ENVIROMENT
+# Open .env and add BOT_TOKEN, SPECIFIC_CHAT_ID and GEMINI_API_KEY
+# ENVIRONMENT defaults to production; use development for local testing
 ```
 
 ## Run
@@ -31,12 +32,22 @@ cp .env_example .env
 go run main.go
 ```
 
-## Testing
+## Automation testing
 
 1. Run tests:
 ```sh
-go test ./tests
+go test -timeout=60s -count=1 ./tests
 ```
+
+## Manual testing
+
+1. Go to [@BotFather](https://t.me/BotFather)
+2. Create test bot
+3. Create test group
+4. Add test bot to test group
+5. Get group_id https://stackoverflow.com/questions/32423837/telegram-bot-how-to-get-a-group-chat-id
+6. Put `.env` and set `ENVIRONMENT=development` to use a 4-second command cooldown
+7. Run the bot
 
 ## Usage
 
@@ -47,14 +58,21 @@ The bot supports the following commands:
 - `/toplength`     - show the top 10 by pen length
 - `/topgiga`       - show the top 10 gigachats
 - `/topunhandsome` - show the top 10 unhandsome members
+- `/memory`        - show what AI remembers about you in this chat
+- `/forgetme`      - delete what AI remembers about you in this chat
 
 
 ## Administrative
 
-To restart the bot every hours, add the following cron job:
+To check update version every hour, add the following cron job:
 
 ```sh
 0 * * * * cd /root/apps/super_cm_bot && scripts/restart_bot.sh
+```
+
+To build new version, run command:
+```sh
+./scripts/build.sh
 ```
 
 ## License

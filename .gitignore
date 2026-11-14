@@ -1,6 +1,8 @@
+/.vscode/
 .env
 /data/
 /logs/
 /backups/
 __debug_**.exe
 scripts/data.csv
+*.db
