@@ -87,3 +87,5 @@ A release is a tag `vX.Y.Z` on `main` plus a GitHub Release with the `bot` binar
 - Actions → Release → Run workflow (choose minor/patch/major; the version is computed from the last tag).
 
 The release is refused unless the latest Go CI run on that commit is green.
+
+Deploy: `scripts/restart_bot.sh` (cron) downloads `bot` from `releases/latest`, verifies it against `bot.sha256` and restarts the bot only when the checksum differs from the installed binary. A plain push to `main` deploys nothing.
