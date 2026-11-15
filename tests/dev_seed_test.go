@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"os"
 	"testing"
 
 	"github.com/denis1011101/super_cm_bot/app"
@@ -103,5 +104,39 @@ func TestEnsureDevUser_RegistersLikeFirstPenAndKeepsExistingData(t *testing.T) {
 
 	if err := app.EnsureDevUser(db, chatID, 0, "x"); err == nil {
 		t.Fatal("non-positive id should fail")
+	}
+}
+
+func TestResetDatabaseFiles_WipesDataAndAllowsFreshInit(t *testing.T) {
+	db := setupGeminiDB(t)
+	if err := app.EnsureDevUser(db, -100500, 42, "denis"); err != nil {
+		t.Fatalf("EnsureDevUser: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	if err := app.ResetDatabaseFiles("./data"); err != nil {
+		t.Fatalf("ResetDatabaseFiles: %v", err)
+	}
+	if _, err := os.Stat("./data/pens.db"); !os.IsNotExist(err) {
+		t.Fatalf("pens.db should be gone, stat err = %v", err)
+	}
+	// Повторный сброс без файлов — не ошибка.
+	if err := app.ResetDatabaseFiles("./data"); err != nil {
+		t.Fatalf("second ResetDatabaseFiles: %v", err)
+	}
+
+	fresh, err := app.InitDB()
+	if err != nil {
+		t.Fatalf("InitDB after reset: %v", err)
+	}
+	defer func() { _ = fresh.Close() }()
+	var n int
+	if err := fresh.QueryRow("SELECT COUNT(*) FROM pens").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("expected empty pens after reset, got %d", n)
 	}
 }

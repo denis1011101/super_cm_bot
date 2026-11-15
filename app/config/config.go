@@ -26,6 +26,7 @@ type Config struct {
 	fakeUserCount int
 	devUserID     int64
 	devUserName   string
+	resetDB       bool
 }
 
 // Load reads configuration from environment variables.
@@ -52,6 +53,17 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("DEV_FAKE_USERS is allowed only when ENVIRONMENT=development")
 		}
 		cfg.fakeUserCount = count
+	}
+
+	if rawReset := strings.TrimSpace(os.Getenv("DEV_RESET_DB")); rawReset != "" {
+		reset, err := strconv.ParseBool(rawReset)
+		if err != nil {
+			return Config{}, fmt.Errorf("DEV_RESET_DB must be true or false, got %q", rawReset)
+		}
+		if reset && !cfg.IsDevelopment() {
+			return Config{}, fmt.Errorf("DEV_RESET_DB is allowed only when ENVIRONMENT=development")
+		}
+		cfg.resetDB = reset
 	}
 
 	if rawID := strings.TrimSpace(os.Getenv("DEV_USER_ID")); rawID != "" {
@@ -87,6 +99,11 @@ func (c Config) IsTest() bool {
 // development database. Zero disables test user creation.
 func (c Config) FakeUserCount() int {
 	return c.fakeUserCount
+}
+
+// ResetDB reports whether the development database must be wiped at startup.
+func (c Config) ResetDB() bool {
+	return c.resetDB
 }
 
 // DevUser returns the real Telegram user to register at startup in the

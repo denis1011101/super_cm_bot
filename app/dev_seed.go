@@ -2,7 +2,10 @@ package app
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 )
 
 const devFakeUserBaseID int64 = -990000000
@@ -67,6 +70,18 @@ func EnsureDevUser(db *sql.DB, chatID, userID int64, userName string) error {
 	`, userName, userID, chatID)
 	if err != nil {
 		return fmt.Errorf("ensure dev user %d: %w", userID, err)
+	}
+	return nil
+}
+
+// ResetDatabaseFiles deletes the SQLite database and its WAL/SHM side files
+// from dbDir so the next InitDB starts from an empty schema. Missing files are
+// not an error. It must run before the database is opened.
+func ResetDatabaseFiles(dbDir string) error {
+	for _, name := range []string{"pens.db", "pens.db-wal", "pens.db-shm"} {
+		if err := os.Remove(filepath.Join(dbDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", name, err)
+		}
 	}
 	return nil
 }

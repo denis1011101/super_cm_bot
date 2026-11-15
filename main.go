@@ -104,6 +104,13 @@ func main() {
 
 	updates := bot.GetUpdatesChan(u)
 
+	if runtimeConfig.ResetDB() {
+		if err := app.ResetDatabaseFiles("./data"); err != nil {
+			log.Fatalf("Failed to reset development database: %v", err)
+		}
+		log.Println("DEV_RESET_DB: development database wiped, starting from an empty one")
+	}
+
 	db, err := app.InitDB()
 	if err != nil {
 		log.Fatal("Ошибка инициализации базы данных: ", err)

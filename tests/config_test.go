@@ -139,3 +139,45 @@ func TestConfigLoadDevUser(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigLoadResetDB(t *testing.T) {
+	tests := []struct {
+		name    string
+		env     string
+		value   string
+		want    bool
+		wantErr bool
+	}{
+		{name: "unset", env: "development", value: "", want: false},
+		{name: "true", env: "development", value: "true", want: true},
+		{name: "false", env: "development", value: "false", want: false},
+		{name: "1", env: "development", value: "1", want: true},
+		{name: "false allowed in production", env: "production", value: "false", want: false},
+		{name: "rejected in production", env: "production", value: "true", wantErr: true},
+		{name: "rejected in test", env: "test", value: "true", wantErr: true},
+		{name: "rejected by default environment", env: "", value: "true", wantErr: true},
+		{name: "garbage", env: "development", value: "maybe", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ENVIRONMENT", tt.env)
+			t.Setenv("DEV_FAKE_USERS", "")
+			t.Setenv("DEV_USER_ID", "")
+			t.Setenv("DEV_RESET_DB", tt.value)
+			cfg, err := config.Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Load() should fail")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got := cfg.ResetDB(); got != tt.want {
+				t.Errorf("ResetDB() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
