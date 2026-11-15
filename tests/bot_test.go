@@ -90,9 +90,8 @@ func TestArchiveInactiveUsers_RecentUserStaysActive(t *testing.T) {
 }
 
 // TestArchiveInactiveUsers_NullLastUpdateArchived — пользователь с NULL pen_last_update_at
-// ДОЛЖЕН архивироваться. NULL остаётся только у легаси-записей, созданных до того, как
-// registerBot начал ставить pen_last_update_at = CURRENT_TIMESTAMP: спина у них не было
-// никогда, но из-за SQLite-семантики NULL < date = NULL архиватор их раньше пропускал,
+// ДОЛЖЕН архивироваться. NULL означает, что пользователь ещё не завершил ни одного спина;
+// из-за SQLite-семантики NULL < date = NULL архиватор такие записи раньше пропускал,
 // и они бесконечно участвовали в giga/unh.
 func TestArchiveInactiveUsers_NullLastUpdateArchived(t *testing.T) {
 	db := setupBotDB(t)
