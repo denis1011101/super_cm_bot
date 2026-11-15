@@ -78,3 +78,12 @@ To build new version, run command:
 ## License
 
 [LICENSE](LICENSE)
+
+## Release
+
+A release is a tag `vX.Y.Z` on `main` plus a GitHub Release with the `bot` binary (linux/amd64, built by CI) and `bot.sha256` attached. The release notes list the commit titles since the previous tag.
+
+- `git tag vX.Y.Z && git push origin vX.Y.Z`, or
+- Actions → Release → Run workflow (choose minor/patch/major; the version is computed from the last tag).
+
+The release is refused unless the latest Go CI run on that commit is green.

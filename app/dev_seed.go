@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const devFakeUserBaseID int64 = -990000000
@@ -33,9 +34,9 @@ func EnsureDevFakeUsers(db *sql.DB, chatID int64, count int) error {
 		_, err = tx.Exec(`
 			INSERT INTO pens (
 				pen_name, tg_pen_id, tg_chat_id, pen_length,
-				handsome_count, unhandsome_count, pen_last_update_at, is_active
+				handsome_count, unhandsome_count, pen_last_update_at, registered_at, is_active
 			)
-			VALUES (?, ?, ?, 5, 0, 0, CURRENT_TIMESTAMP, TRUE)
+			VALUES (?, ?, ?, 5, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, TRUE)
 			ON CONFLICT(tg_pen_id) DO UPDATE SET
 				pen_name = excluded.pen_name,
 				tg_chat_id = excluded.tg_chat_id,
@@ -63,11 +64,11 @@ func EnsureDevUser(db *sql.DB, chatID, userID int64, userName string) error {
 	_, err := db.Exec(`
 		INSERT INTO pens (
 			pen_name, tg_pen_id, tg_chat_id, pen_length,
-			handsome_count, unhandsome_count, pen_last_update_at, is_active
+			handsome_count, unhandsome_count, pen_last_update_at, registered_at, is_active
 		)
-		VALUES (?, ?, ?, 5, 0, 0, NULL, TRUE)
+		VALUES (?, ?, ?, 5, 0, 0, NULL, ?, TRUE)
 		ON CONFLICT(tg_pen_id) DO UPDATE SET is_active = TRUE
-	`, userName, userID, chatID)
+	`, userName, userID, chatID, time.Now())
 	if err != nil {
 		return fmt.Errorf("ensure dev user %d: %w", userID, err)
 	}

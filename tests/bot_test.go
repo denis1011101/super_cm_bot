@@ -299,3 +299,77 @@ func TestRefreshUsernames_UpdatesWithSingleConnection(t *testing.T) {
 		t.Fatalf("pen_name = %q, want new_name", name)
 	}
 }
+
+func setRegisteredAt(t *testing.T, db *sql.DB, userID int64, at time.Time) {
+	t.Helper()
+	if _, err := db.Exec("UPDATE pens SET registered_at = ? WHERE tg_pen_id = ?", at, userID); err != nil {
+		t.Fatalf("setRegisteredAt: %v", err)
+	}
+}
+
+// TestArchiveInactiveUsers_NewRegistrationWithoutSpinStaysActive — новичок ещё не крутил /pen
+// (pen_last_update_at = NULL), но зарегистрирован только что: архивироваться нельзя.
+func TestArchiveInactiveUsers_NewRegistrationWithoutSpinStaysActive(t *testing.T) {
+	db := setupBotDB(t)
+	insertPen(t, db, 10, 100, nil)
+	setRegisteredAt(t, db, 10, time.Now())
+
+	if err := app.ArchiveInactiveUsers(db); err != nil {
+		t.Fatalf("ArchiveInactiveUsers: %v", err)
+	}
+	if !isActiveFor(t, db, 10, 100) {
+		t.Fatal("freshly registered user without a spin must stay active")
+	}
+}
+
+// TestArchiveInactiveUsers_OldRegistrationWithoutSpinArchived — не крутил /pen и зарегистрирован
+// больше 180 дней назад: архивируется.
+func TestArchiveInactiveUsers_OldRegistrationWithoutSpinArchived(t *testing.T) {
+	db := setupBotDB(t)
+	insertPen(t, db, 11, 100, nil)
+	setRegisteredAt(t, db, 11, time.Now().AddDate(0, 0, -181))
+
+	if err := app.ArchiveInactiveUsers(db); err != nil {
+		t.Fatalf("ArchiveInactiveUsers: %v", err)
+	}
+	if isActiveFor(t, db, 11, 100) {
+		t.Fatal("user registered 181 days ago without a spin should be archived")
+	}
+}
+
+// TestMigration7_BackfillsRegisteredAt — у существующих строк registered_at берётся из последнего
+// спина, а у NULL — момент миграции, чтобы старые «NULL»-новички не вылетели сразу.
+func TestMigration7_BackfillsRegisteredAt(t *testing.T) {
+	db := setupBotDB(t)
+	if _, err := db.Exec("ALTER TABLE pens DROP COLUMN registered_at"); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if _, err := db.Exec("DELETE FROM migrations WHERE id = 7"); err != nil {
+		t.Fatalf("delete migration record: %v", err)
+	}
+	spun := time.Now().AddDate(0, 0, -30).Format("2006-01-02 15:04:05Z07:00")
+	insertPen(t, db, 20, 100, spun)
+	insertPen(t, db, 21, 100, nil)
+
+	if err := app.RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	var spunReg, nullReg sql.NullString
+	if err := db.QueryRow("SELECT registered_at FROM pens WHERE tg_pen_id = 20").Scan(&spunReg); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT registered_at FROM pens WHERE tg_pen_id = 21").Scan(&nullReg); err != nil {
+		t.Fatal(err)
+	}
+	if !spunReg.Valid || spunReg.String == "" || !nullReg.Valid || nullReg.String == "" {
+		t.Fatalf("registered_at must be backfilled, got %+v / %+v", spunReg, nullReg)
+	}
+
+	if err := app.ArchiveInactiveUsers(db); err != nil {
+		t.Fatalf("ArchiveInactiveUsers: %v", err)
+	}
+	if !isActiveFor(t, db, 21, 100) {
+		t.Fatal("legacy NULL user gets a 180-day grace period after migration")
+	}
+}

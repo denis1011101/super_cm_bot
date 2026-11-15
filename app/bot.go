@@ -65,7 +65,9 @@ func sendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessage
 	return true
 }
 
-// ArchiveInactiveUsers помечает пользователей как неактивных, если они не обновлялись 180 дней
+// ArchiveInactiveUsers помечает пользователей как неактивных, если они не обновлялись 180 дней.
+// Пока пользователь не крутил /pen (pen_last_update_at = NULL), срок считается от даты
+// регистрации; запись без обеих дат архивируется как легаси.
 func ArchiveInactiveUsers(db *sql.DB) error {
 	// Вычисляем дату 180 дней назад
 	cutoffDate := time.Now().AddDate(0, 0, -180)
@@ -76,7 +78,8 @@ func ArchiveInactiveUsers(db *sql.DB) error {
 	query := `
         UPDATE pens
         SET is_active = FALSE
-        WHERE (pen_last_update_at IS NULL OR pen_last_update_at < ?)
+        WHERE (COALESCE(pen_last_update_at, registered_at) IS NULL
+            OR COALESCE(pen_last_update_at, registered_at) < ?)
         AND is_active = TRUE
     `
 

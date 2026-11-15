@@ -99,6 +99,20 @@ var migrations = []Migration{
 				ON gemini_memories(chat_id, user_id);
 			`,
 	},
+	{
+		ID:   7,
+		Name: "add_registered_at_to_pens",
+		// pen_last_update_at = NULL значит «зарегистрирован, но ещё не крутил /pen».
+		// Срок неактивности для таких считается от даты регистрации, иначе
+		// архиватор выкидывает новичка в первую же неделю. У существующих строк
+		// дата — последний спин, а у NULL — момент миграции (льготные 180 дней).
+		SQL: `
+			ALTER TABLE pens ADD COLUMN registered_at TIMESTAMP;
+			UPDATE pens
+			SET registered_at = COALESCE(pen_last_update_at, CURRENT_TIMESTAMP)
+			WHERE registered_at IS NULL;
+			`,
+	},
 }
 
 // RunMigrations выполняет миграции, которые еще не были применены
