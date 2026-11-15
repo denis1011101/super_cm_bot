@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,22 +22,38 @@ const (
 // the production defaults, which also keeps tests and existing deployments
 // safe when ENVIRONMENT is not set.
 type Config struct {
-	environment Environment
+	environment   Environment
+	fakeUserCount int
 }
 
 // Load reads configuration from environment variables.
 func Load() (Config, error) {
 	raw := strings.ToLower(strings.TrimSpace(os.Getenv("ENVIRONMENT")))
+	cfg := Config{}
 	switch Environment(raw) {
 	case "", Production:
-		return Config{environment: Production}, nil
+		cfg.environment = Production
 	case Development:
-		return Config{environment: Development}, nil
+		cfg.environment = Development
 	case Test:
-		return Config{environment: Test}, nil
+		cfg.environment = Test
 	default:
 		return Config{}, fmt.Errorf("ENVIRONMENT must be production, development or test, got %q", raw)
 	}
+
+	rawCount := strings.TrimSpace(os.Getenv("DEV_FAKE_USERS"))
+	if rawCount == "" {
+		return cfg, nil
+	}
+	count, err := strconv.Atoi(rawCount)
+	if err != nil || count < 0 || count > 100 {
+		return Config{}, fmt.Errorf("DEV_FAKE_USERS must be an integer from 0 to 100, got %q", rawCount)
+	}
+	if count > 0 && !cfg.IsDevelopment() {
+		return Config{}, fmt.Errorf("DEV_FAKE_USERS is allowed only when ENVIRONMENT=development")
+	}
+	cfg.fakeUserCount = count
+	return cfg, nil
 }
 
 func (c Config) IsProduction() bool {
@@ -49,6 +66,12 @@ func (c Config) IsDevelopment() bool {
 
 func (c Config) IsTest() bool {
 	return c.environment == Test
+}
+
+// FakeUserCount is the number of deterministic test users to ensure in the
+// development database. Zero disables test user creation.
+func (c Config) FakeUserCount() int {
+	return c.fakeUserCount
 }
 
 // SpinCooldown keeps production behavior unchanged while making local and

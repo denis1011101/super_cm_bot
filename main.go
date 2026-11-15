@@ -114,6 +114,13 @@ func main() {
 		}
 	}()
 
+	if runtimeConfig.IsDevelopment() && runtimeConfig.FakeUserCount() > 0 {
+		if err := app.EnsureDevFakeUsers(db, specificChatID, runtimeConfig.FakeUserCount()); err != nil {
+			log.Fatalf("Failed to seed development users: %v", err)
+		}
+		log.Printf("Ensured %d development test users", runtimeConfig.FakeUserCount())
+	}
+
 	// Свои реплики бот должен видеть в контексте Gemini, хоть и не отвечает на них
 	app.EnableOutgoingMemory(db)
 
