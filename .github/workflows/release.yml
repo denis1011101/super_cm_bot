@@ -29,7 +29,9 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # Фиксируем 24.04 под ОС прод-сервера (Ubuntu 24.04 LTS), чтобы обновление
+    # ubuntu-latest не подняло требуемую версию GLIBC для CGO-сборки.
+    runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
 
@@ -56,24 +58,23 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      # Релиз с красного коммита нельзя: деплой берёт именно его бинарник.
-      # Смотрим последний завершённый прогон Go CI на этом SHA.
+      # Релиз с красного или ещё идущего коммита нельзя: деплой берёт его бинарник.
+      # Берём самый свежий прогон Go CI на этом SHA без фильтра по status, чтобы
+      # повторный незавершённый прогон не скрылся за старым зелёным.
       - name: Require green CI
         run: |
           SHA=$(git rev-parse HEAD)
-          CONCLUSION=$(gh api "repos/${{ github.repository }}/actions/workflows/go-ci.yml/runs?head_sha=$SHA&status=completed&per_page=1" \
-            --jq '.workflow_runs[0].conclusion // "none"')
-          case "$CONCLUSION" in
-            success) echo "CI passed on ${SHA:0:8}" ;;
-            none)
-              echo "::error::Go CI has not finished on ${SHA:0:8} yet — wait for it."
-              exit 1
-              ;;
-            *)
-              echo "::error::Latest Go CI run on ${SHA:0:8} ended with '$CONCLUSION'."
-              exit 1
-              ;;
-          esac
+          read -r STATUS CONCLUSION <<< "$(gh api "repos/${{ github.repository }}/actions/workflows/go-ci.yml/runs?head_sha=$SHA&per_page=1" \
+            --jq '.workflow_runs[0] | "\(.status // "none") \(.conclusion // "none")"')"
+          if [[ "$STATUS" == "completed" && "$CONCLUSION" == "success" ]]; then
+            echo "CI passed on ${SHA:0:8}"
+          elif [[ "$STATUS" != "completed" ]]; then
+            echo "::error::Latest Go CI run on ${SHA:0:8} is '$STATUS' (not completed yet) — wait for it."
+            exit 1
+          else
+            echo "::error::Latest Go CI run on ${SHA:0:8} ended with '$CONCLUSION'."
+            exit 1
+          fi
 
       - name: Compute version
         id: version

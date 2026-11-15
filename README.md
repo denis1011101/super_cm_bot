@@ -89,3 +89,5 @@ A release is a tag `vX.Y.Z` on `main` plus a GitHub Release with the `bot` binar
 The release is refused unless the latest Go CI run on that commit is green.
 
 Deploy: `scripts/restart_bot.sh` (cron) downloads `bot` from `releases/latest`, verifies it against `bot.sha256` and restarts the bot only when the checksum differs from the installed binary. A plain push to `main` deploys nothing.
+
+Before the first release-based deploy, update `scripts/restart_bot.sh` on the server manually (`git pull` or copy the file), because cron runs the local copy of the script.
