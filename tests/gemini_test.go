@@ -1675,14 +1675,14 @@ func TestGeminiAgentStatusHeartbeat_PublishesInitialAndStops(t *testing.T) {
 // resolution, default fallbacks rotation, and fallback filtering.
 func TestGeminiModelResolution_EdgeCases(t *testing.T) {
 	// resolveGeminiModel defaults
-	if got := resolveGeminiModel(""); got != "gemini-3.7-flash" {
-		t.Fatalf("empty model should default to gemini-3.7-flash, got %q", got)
+	if got := resolveGeminiModel(""); got != "gemini-3.8-flash" {
+		t.Fatalf("empty model should default to gemini-3.8-flash, got %q", got)
 	}
-	if got := resolveGeminiModel("   "); got != "gemini-3.7-flash" {
-		t.Fatalf("whitespace model should default to gemini-3.7-flash, got %q", got)
+	if got := resolveGeminiModel("   "); got != "gemini-3.8-flash" {
+		t.Fatalf("whitespace model should default to gemini-3.8-flash, got %q", got)
 	}
-	if got := resolveGeminiModel("not-gemini-model"); got != "gemini-3.7-flash" {
-		t.Fatalf("invalid model should default to gemini-3.7-flash, got %q", got)
+	if got := resolveGeminiModel("not-gemini-model"); got != "gemini-3.8-flash" {
+		t.Fatalf("invalid model should default to gemini-3.8-flash, got %q", got)
 	}
 	if got := resolveGeminiModel("models/gemini-3.8-flash-latest"); got != "gemini-3.8-flash" {
 		t.Fatalf("expected normalized gemini-3.8-flash, got %q", got)

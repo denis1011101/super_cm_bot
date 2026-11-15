@@ -35,7 +35,7 @@ const (
 	geminiDelayRange         = 2 * time.Second
 	geminiMaxAttempts        = 3
 	geminiRetryBackoff       = time.Second
-	defaultGeminiModel       = "gemini-3.7-flash"
+	defaultGeminiModel       = "gemini-3.8-flash"
 )
 
 var defaultGeminiPool = []string{
