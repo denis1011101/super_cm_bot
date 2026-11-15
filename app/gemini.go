@@ -852,6 +852,7 @@ func (a *GeminiAgent) callLLM(ctx context.Context, systemPrompt, userPrompt, sea
 			reqData.Tools = searchReq.Tools
 			reply, err := a.executeGenerateContent(ctx, reqData)
 			if err == nil {
+				log.Printf("GeminiAgent.callLLM: answered by model %s (with search)", a.model)
 				a.publishStatus(agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone, "answered by "+a.model)
 				return reply, nil
 			}
@@ -875,7 +876,9 @@ func (a *GeminiAgent) generateContentWithFallback(ctx context.Context, reqData G
 			reply, err := a.executeGenerateContentWithModel(ctx, model, reqData)
 			if err == nil {
 				if model != a.model {
-					log.Printf("GeminiAgent.callLLM: answered by fallback model %s", model)
+					log.Printf("GeminiAgent.callLLM: answered by fallback model %s (primary %s)", model, a.model)
+				} else {
+					log.Printf("GeminiAgent.callLLM: answered by model %s", model)
 				}
 				a.publishStatus(agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone, "answered by "+model)
 				return reply, nil

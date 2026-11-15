@@ -121,6 +121,13 @@ func main() {
 		log.Printf("Ensured %d development test users", runtimeConfig.FakeUserCount())
 	}
 
+	if devUserID, devUserName, ok := runtimeConfig.DevUser(); ok {
+		if err := app.EnsureDevUser(db, specificChatID, devUserID, devUserName); err != nil {
+			log.Fatalf("Failed to register development user: %v", err)
+		}
+		log.Printf("Ensured development user %d (%s)", devUserID, devUserName)
+	}
+
 	// Свои реплики бот должен видеть в контексте Gemini, хоть и не отвечает на них
 	app.EnableOutgoingMemory(db)
 

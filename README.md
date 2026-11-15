@@ -46,7 +46,7 @@ go test -timeout=60s -count=1 ./tests
 3. Create test group
 4. Add test bot to test group
 5. Get group_id https://stackoverflow.com/questions/32423837/telegram-bot-how-to-get-a-group-chat-id
-6. Put `.env` and set `ENVIRONMENT=development` to use a 4-second command cooldown. Optionally set `DEV_FAKE_USERS=5` to create five test participants on startup
+6. Put `.env` and set `ENVIRONMENT=development` to use a 4-second command cooldown. Optionally set `DEV_FAKE_USERS=5` to create five test participants on startup, and `DEV_USER_ID=<your telegram id>` (optionally `DEV_USER_NAME`) to register your own account at startup
 7. Run the bot
 
 ## Usage

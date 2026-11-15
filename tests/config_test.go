@@ -95,3 +95,47 @@ func TestConfigLoadFakeUsers(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigLoadDevUser(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      string
+		id       string
+		userName string
+		wantID   int64
+		wantName string
+		wantErr  bool
+	}{
+		{name: "unset", env: "development"},
+		{name: "default name", env: "development", id: "42", wantID: 42, wantName: "dev_user"},
+		{name: "custom name strips @", env: "development", id: " 42 ", userName: "@denis", wantID: 42, wantName: "denis"},
+		{name: "rejected in production", env: "production", id: "42", wantErr: true},
+		{name: "rejected in test", env: "test", id: "42", wantErr: true},
+		{name: "zero", env: "development", id: "0", wantErr: true},
+		{name: "negative", env: "development", id: "-5", wantErr: true},
+		{name: "not a number", env: "development", id: "abc", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ENVIRONMENT", tt.env)
+			t.Setenv("DEV_FAKE_USERS", "")
+			t.Setenv("DEV_USER_ID", tt.id)
+			t.Setenv("DEV_USER_NAME", tt.userName)
+			cfg, err := config.Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Load() should fail")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			id, name, ok := cfg.DevUser()
+			if ok != (tt.wantID != 0) || id != tt.wantID || name != tt.wantName {
+				t.Errorf("DevUser() = (%d, %q, %v), want (%d, %q)", id, name, ok, tt.wantID, tt.wantName)
+			}
+		})
+	}
+}

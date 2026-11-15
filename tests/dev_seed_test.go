@@ -68,3 +68,40 @@ func TestEnsureDevFakeUsers_CreatesIdempotentlyAndNeverDeletes(t *testing.T) {
 		t.Fatal("negative count should fail")
 	}
 }
+
+func TestEnsureDevUser_RegistersLikeFirstPenAndKeepsExistingData(t *testing.T) {
+	db := setupGeminiDB(t)
+	chatID := int64(-100500)
+
+	if err := app.EnsureDevUser(db, chatID, 42, "denis"); err != nil {
+		t.Fatalf("EnsureDevUser: %v", err)
+	}
+	pen, err := app.GetUserPen(db, 42, chatID)
+	if err != nil {
+		t.Fatalf("GetUserPen: %v", err)
+	}
+	if pen.Size != 5 || !pen.LastUpdateTime.IsZero() {
+		t.Fatalf("expected 5 cm and no last update, got %+v", pen)
+	}
+
+	// Повторный запуск не трогает прогресс и не плодит строки.
+	if _, err := db.Exec("UPDATE pens SET pen_length = 17, is_active = FALSE WHERE tg_pen_id = 42"); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.EnsureDevUser(db, chatID, 42, "other"); err != nil {
+		t.Fatalf("second EnsureDevUser: %v", err)
+	}
+	var n, size int
+	var name string
+	var active bool
+	if err := db.QueryRow("SELECT COUNT(*), MAX(pen_length), MAX(pen_name), MAX(is_active) FROM pens").Scan(&n, &size, &name, &active); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || size != 17 || name != "denis" || !active {
+		t.Fatalf("got rows=%d size=%d name=%q active=%v", n, size, name, active)
+	}
+
+	if err := app.EnsureDevUser(db, chatID, 0, "x"); err == nil {
+		t.Fatal("non-positive id should fail")
+	}
+}

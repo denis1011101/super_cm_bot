@@ -24,6 +24,8 @@ const (
 type Config struct {
 	environment   Environment
 	fakeUserCount int
+	devUserID     int64
+	devUserName   string
 }
 
 // Load reads configuration from environment variables.
@@ -41,18 +43,31 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("ENVIRONMENT must be production, development or test, got %q", raw)
 	}
 
-	rawCount := strings.TrimSpace(os.Getenv("DEV_FAKE_USERS"))
-	if rawCount == "" {
-		return cfg, nil
+	if rawCount := strings.TrimSpace(os.Getenv("DEV_FAKE_USERS")); rawCount != "" {
+		count, err := strconv.Atoi(rawCount)
+		if err != nil || count < 0 || count > 100 {
+			return Config{}, fmt.Errorf("DEV_FAKE_USERS must be an integer from 0 to 100, got %q", rawCount)
+		}
+		if count > 0 && !cfg.IsDevelopment() {
+			return Config{}, fmt.Errorf("DEV_FAKE_USERS is allowed only when ENVIRONMENT=development")
+		}
+		cfg.fakeUserCount = count
 	}
-	count, err := strconv.Atoi(rawCount)
-	if err != nil || count < 0 || count > 100 {
-		return Config{}, fmt.Errorf("DEV_FAKE_USERS must be an integer from 0 to 100, got %q", rawCount)
+
+	if rawID := strings.TrimSpace(os.Getenv("DEV_USER_ID")); rawID != "" {
+		id, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil || id <= 0 {
+			return Config{}, fmt.Errorf("DEV_USER_ID must be a positive Telegram user id, got %q", rawID)
+		}
+		if !cfg.IsDevelopment() {
+			return Config{}, fmt.Errorf("DEV_USER_ID is allowed only when ENVIRONMENT=development")
+		}
+		cfg.devUserID = id
+		cfg.devUserName = strings.TrimPrefix(strings.TrimSpace(os.Getenv("DEV_USER_NAME")), "@")
+		if cfg.devUserName == "" {
+			cfg.devUserName = "dev_user"
+		}
 	}
-	if count > 0 && !cfg.IsDevelopment() {
-		return Config{}, fmt.Errorf("DEV_FAKE_USERS is allowed only when ENVIRONMENT=development")
-	}
-	cfg.fakeUserCount = count
 	return cfg, nil
 }
 
@@ -72,6 +87,12 @@ func (c Config) IsTest() bool {
 // development database. Zero disables test user creation.
 func (c Config) FakeUserCount() int {
 	return c.fakeUserCount
+}
+
+// DevUser returns the real Telegram user to register at startup in the
+// development database. ok is false when DEV_USER_ID is not set.
+func (c Config) DevUser() (id int64, name string, ok bool) {
+	return c.devUserID, c.devUserName, c.devUserID != 0
 }
 
 // SpinCooldown keeps production behavior unchanged while making local and

@@ -48,3 +48,25 @@ func EnsureDevFakeUsers(db *sql.DB, chatID int64, count int) error {
 	}
 	return nil
 }
+
+// EnsureDevUser registers the developer's real Telegram account in the chat,
+// the same way the first /pen would: 5 cm and no previous spin, so the first
+// command is allowed immediately. An existing row keeps its data and is only
+// reactivated.
+func EnsureDevUser(db *sql.DB, chatID, userID int64, userName string) error {
+	if userID <= 0 {
+		return fmt.Errorf("dev user id must be positive: %d", userID)
+	}
+	_, err := db.Exec(`
+		INSERT INTO pens (
+			pen_name, tg_pen_id, tg_chat_id, pen_length,
+			handsome_count, unhandsome_count, pen_last_update_at, is_active
+		)
+		VALUES (?, ?, ?, 5, 0, 0, NULL, TRUE)
+		ON CONFLICT(tg_pen_id) DO UPDATE SET is_active = TRUE
+	`, userName, userID, chatID)
+	if err != nil {
+		return fmt.Errorf("ensure dev user %d: %w", userID, err)
+	}
+	return nil
+}
