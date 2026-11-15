@@ -257,6 +257,47 @@ func (a *GeminiAgent) SetStatusBus(reg *agentbus.Registry, selfName string) {
 	a.bus, a.selfName = reg, selfName
 }
 
+// StartStatusHeartbeat keeps the agent's status on the board current while no
+// LLM call is happening. Replies are gated by a cooldown of an hour or more, far
+// longer than the registry TTL, so without this a healthy idle bot would turn
+// stale and an exhausted-quota report would decay to "unknown" before the bot
+// had actually recovered. Every interval it re-stamps the last published
+// state; if nothing was published yet it reports "ok, quota unknown". The
+// returned function stops the heartbeat.
+func (a *GeminiAgent) StartStatusHeartbeat(interval time.Duration) (stop func()) {
+	if interval <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				a.refreshStatus()
+			}
+		}
+	}()
+	a.refreshStatus()
+	return func() { once.Do(func() { close(done) }) }
+}
+
+func (a *GeminiAgent) refreshStatus() {
+	a.busMu.Lock()
+	bus, self := a.bus, a.selfName
+	a.busMu.Unlock()
+	if bus == nil || self == "" {
+		return
+	}
+	if !bus.Touch(self) {
+		a.publishStatus(agentbus.HealthOK, agentbus.QuotaUnknown, agentbus.ErrNone, "started")
+	}
+}
+
 // publishStatus is best effort: the board going wrong must never take the bot
 // down with it, so failures are logged and swallowed.
 func (a *GeminiAgent) publishStatus(health agentbus.Health, quota agentbus.Quota, errClass, detail string) {

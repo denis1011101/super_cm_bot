@@ -1620,6 +1620,57 @@ func TestGeminiAgentSearchSuccess_PublishesRecoveredStatus(t *testing.T) {
 	}
 }
 
+// TestGeminiAgentStatusHeartbeat_KeepsIdleStatusCurrent verifies that a bot
+// with no LLM traffic stays fresh on the board and keeps its last known quota
+// instead of decaying to stale/unknown after the TTL.
+func TestGeminiAgentStatusHeartbeat_KeepsIdleStatusCurrent(t *testing.T) {
+	db := setupGeminiDB(t)
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{DB: db})
+
+	registry := agentbus.NewRegistry(80 * time.Millisecond)
+	agent.SetStatusBus(registry, "idle_bot")
+	_, _ = registry.Report("idle_bot", agentbus.HealthDown, agentbus.QuotaExhausted, agentbus.ErrResourceExausted, "")
+
+	stop := agent.StartStatusHeartbeat(10 * time.Millisecond)
+	defer stop()
+
+	time.Sleep(300 * time.Millisecond) // > 3x TTL with no LLM calls
+
+	status, ok := registry.Get("idle_bot")
+	if !ok {
+		t.Fatal("status should be registered")
+	}
+	if status.Stale {
+		t.Fatal("heartbeat should keep the status current")
+	}
+	if status.Quota != agentbus.QuotaExhausted || status.ErrorClass != agentbus.ErrResourceExausted {
+		t.Fatalf("heartbeat must not change the reported state, got %+v", status)
+	}
+}
+
+// TestGeminiAgentStatusHeartbeat_PublishesInitialAndStops verifies the first
+// beat publishes "ok, quota unknown" and that stop() ends the refreshing.
+func TestGeminiAgentStatusHeartbeat_PublishesInitialAndStops(t *testing.T) {
+	db := setupGeminiDB(t)
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{DB: db})
+
+	registry := agentbus.NewRegistry(80 * time.Millisecond)
+	agent.SetStatusBus(registry, "fresh_bot")
+
+	stop := agent.StartStatusHeartbeat(10 * time.Millisecond)
+	status, ok := registry.Get("fresh_bot")
+	if !ok || status.Health != agentbus.HealthOK || status.Quota != agentbus.QuotaUnknown {
+		t.Fatalf("expected initial ok/unknown status, got %+v (ok=%v)", status, ok)
+	}
+
+	stop()
+	stop() // idempotent
+	time.Sleep(300 * time.Millisecond)
+	if status, _ := registry.Get("fresh_bot"); !status.Stale {
+		t.Fatal("after stop() the status should go stale")
+	}
+}
+
 // TestGeminiModelResolution_EdgeCases tests edge cases for model normalization,
 // resolution, default fallbacks rotation, and fallback filtering.
 func TestGeminiModelResolution_EdgeCases(t *testing.T) {

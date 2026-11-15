@@ -124,6 +124,21 @@ func (r *Registry) Report(bot string, health Health, quota Quota, errClass, deta
 	return s, nil
 }
 
+// Touch refreshes the timestamp of a bot's last published status without
+// changing its content, so a bot that is alive but idle is not mistaken for a
+// dead one. It reports false when the bot has published nothing yet.
+func (r *Registry) Touch(bot string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.entries[bot]
+	if !ok {
+		return false
+	}
+	s.UpdatedAt = r.now().UTC()
+	r.entries[bot] = s
+	return true
+}
+
 // Get returns one bot's status, with staleness resolved as of now.
 func (r *Registry) Get(bot string) (Status, bool) {
 	r.mu.RLock()

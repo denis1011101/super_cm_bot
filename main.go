@@ -24,9 +24,10 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// agentBusTTL is how long a published status stays current. It is a few times
-// the bot's own reporting cadence, so a peer is marked stale only after it has
-// genuinely stopped talking, not after one slow call.
+// agentBusTTL is how long a published status stays current. The bot re-stamps
+// its last status every agentBusTTL/3 (see StartStatusHeartbeat), so a peer is
+// marked stale only after it has missed several beats, i.e. genuinely stopped,
+// not just been idle between replies.
 const agentBusTTL = 15 * time.Minute
 
 // klewoRe матчит паттерн "@юзер клево/клёво" с необязательными знаками препинания в конце
@@ -281,6 +282,7 @@ func startAgentBus(agent *app.GeminiAgent, defaultName string) {
 
 	reg := agentbus.NewRegistry(agentBusTTL)
 	agent.SetStatusBus(reg, selfName)
+	agent.StartStatusHeartbeat(agentBusTTL / 3)
 
 	if host, _, splitErr := net.SplitHostPort(addr); splitErr == nil && !isLoopbackHost(host) {
 		log.Printf("agentbus: %s is not loopback - bearer tokens will cross the network in clear "+
