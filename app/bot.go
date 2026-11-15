@@ -65,7 +65,9 @@ func sendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessage
 	return true
 }
 
-// ArchiveInactiveUsers помечает пользователей как неактивных, если они не обновлялись 180 дней
+// ArchiveInactiveUsers помечает пользователей как неактивных, если они не обновлялись 180 дней.
+// Пока пользователь не крутил /pen (pen_last_update_at = NULL), срок считается от даты
+// регистрации; запись без обеих дат архивируется как легаси.
 func ArchiveInactiveUsers(db *sql.DB) error {
 	// Вычисляем дату 180 дней назад
 	cutoffDate := time.Now().AddDate(0, 0, -180)
@@ -76,7 +78,8 @@ func ArchiveInactiveUsers(db *sql.DB) error {
 	query := `
         UPDATE pens
         SET is_active = FALSE
-        WHERE (pen_last_update_at IS NULL OR pen_last_update_at < ?)
+        WHERE (COALESCE(pen_last_update_at, registered_at) IS NULL
+            OR COALESCE(pen_last_update_at, registered_at) < ?)
         AND is_active = TRUE
     `
 
@@ -97,69 +100,89 @@ func ArchiveInactiveUsers(db *sql.DB) error {
 	return nil
 }
 
+type penUserRow struct {
+	userID  int64
+	chatID  int64
+	oldName sql.NullString
+}
+
+func loadPenUsersForRefresh(db *sql.DB) ([]penUserRow, error) {
+	rows, err := db.Query("SELECT tg_pen_id, tg_chat_id, pen_name FROM pens WHERE tg_pen_id > 0")
+	if err != nil {
+		log.Printf("RefreshUsernames: failed to query pens: %v", err)
+		return nil, err
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			log.Printf("RefreshUsernames: failed to close rows: %v", err)
+		}
+	}()
+
+	var users []penUserRow
+	for rows.Next() {
+		var u penUserRow
+		if err := rows.Scan(&u.userID, &u.chatID, &u.oldName); err != nil {
+			log.Printf("RefreshUsernames: row scan error: %v", err)
+			continue
+		}
+		users = append(users, u)
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("RefreshUsernames: rows iteration error: %v", err)
+		return nil, err
+	}
+
+	return users, nil
+}
+
 // RefreshUsernames пробегает всех пользователей в таблице pens и обновляет pen_name,
 // если Telegram API вернул отличный username. В случае ошибки оставляет прежний.
 func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
-    rows, err := db.Query("SELECT tg_pen_id, tg_chat_id, pen_name FROM pens WHERE tg_pen_id > 0")
-    if err != nil {
-        log.Printf("RefreshUsernames: failed to query pens: %v", err)
-        return err
-    }
-    defer func() {
-        if err := rows.Close(); err != nil {
-            log.Printf("RefreshUsernames: failed to close rows: %v", err)
-        }
-    }()
+	// Загружаем список и закрываем rows до вызовов Telegram API и UPDATE,
+	// чтобы не удерживать единственное соединение в пуле (MaxOpenConns=1).
+	users, err := loadPenUsersForRefresh(db)
+	if err != nil {
+		return err
+	}
 
-    for rows.Next() {
-        var userID int64
-        var chatID int64
-        var oldName sql.NullString
-        if err := rows.Scan(&userID, &chatID, &oldName); err != nil {
-            log.Printf("RefreshUsernames: row scan error: %v", err)
-            continue
-        }
+	for _, u := range users {
+		// Запрашиваем информацию о пользователе в чате
+		cfg := tgbotapi.GetChatMemberConfig{
+			ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
+				ChatID: u.chatID,
+				UserID: u.userID,
+			},
+		}
+		member, err := bot.GetChatMember(cfg)
+		if err != nil {
+			log.Printf("RefreshUsernames: GetChatMember failed for user %d in chat %d: %v", u.userID, u.chatID, err)
+			// не обновляем, оставляем старое имя
+			time.Sleep(100 * time.Millisecond) // небольшой респит, чтобы не спамить API
+			continue
+		}
 
-        // Запрашиваем информацию о пользователе в чате
-        cfg := tgbotapi.GetChatMemberConfig{
-            ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
-                ChatID: chatID,
-                UserID: userID,
-            },
-        }
-        member, err := bot.GetChatMember(cfg)
-        if err != nil {
-            log.Printf("RefreshUsernames: GetChatMember failed for user %d in chat %d: %v", userID, chatID, err)
-            // не обновляем, оставляем старое имя
-            time.Sleep(100 * time.Millisecond) // небольшой респит, чтобы не спамить API
-            continue
-        }
+		newName := member.User.UserName
+		if newName == "" {
+			// если у пользователя нет username — пропускаем
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
 
-        newName := member.User.UserName
-        if newName == "" {
-            // если у пользователя нет username — пропускаем
-            time.Sleep(100 * time.Millisecond)
-            continue
-        }
+		if !u.oldName.Valid || newName != u.oldName.String {
+			_, err := db.Exec("UPDATE pens SET pen_name = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newName, u.userID, u.chatID)
+			if err != nil {
+				log.Printf("RefreshUsernames: failed to update pen_name for user %d chat %d: %v", u.userID, u.chatID, err)
+			} else {
+				log.Printf("RefreshUsernames: updated pen_name for user %d in chat %d: %s -> %s", u.userID, u.chatID, u.oldName.String, newName)
+			}
+		}
 
-        if !oldName.Valid || newName != oldName.String {
-            _, err := db.Exec("UPDATE pens SET pen_name = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newName, userID, chatID)
-            if err != nil {
-                log.Printf("RefreshUsernames: failed to update pen_name for user %d chat %d: %v", userID, chatID, err)
-            } else {
-                log.Printf("RefreshUsernames: updated pen_name for user %d in chat %d: %s -> %s", userID, chatID, oldName.String, newName)
-            }
-        }
+		// Небольшая пауза между запросами к API
+		time.Sleep(100 * time.Millisecond)
+	}
 
-        // Небольшая пауза между запросами к API
-        time.Sleep(100 * time.Millisecond)
-    }
-
-    if err := rows.Err(); err != nil {
-        log.Printf("RefreshUsernames: rows iteration error: %v", err)
-        return err
-    }
-    return nil
+	return nil
 }
 
 // StartPenNameUpdateRoutine запускает горутину для еженедельного актуализирования pen_name

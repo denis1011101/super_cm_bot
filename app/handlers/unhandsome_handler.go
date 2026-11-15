@@ -92,7 +92,10 @@ func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) 
 	newSize := pen.Size + result.Size
 
 	// Обновление значения у выигравшего участника и времени последнего обновления у всех участников
-	app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID)
+	if err := app.UpdateUnhandsome(db, newSize, randomMember.ID, chatID); err != nil {
+		log.Printf("Error updating unhandsome in database: %v", err)
+		return
+	}
 
 	// Генерируем сообщение для чата
 	message := messagegenerators.GetRandomUnhandsomeMessage(randomMember.Name, result.Size, newSize, isHoliday)

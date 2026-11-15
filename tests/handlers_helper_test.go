@@ -5,11 +5,29 @@ import (
 	"time"
 	_ "unsafe"
 
-	_ "github.com/denis1011101/super_cm_bot/app/handlers"
+	"github.com/denis1011101/super_cm_bot/app/config"
+	"github.com/denis1011101/super_cm_bot/app/handlers"
 )
 
 //go:linkname handlersCheckIsSpinNotLegal github.com/denis1011101/super_cm_bot/app/handlers.checkIsSpinNotLegal
 func handlersCheckIsSpinNotLegal(lastUpdate time.Time) bool
+
+func TestCheckIsSpinNotLegalDevelopmentCooldown(t *testing.T) {
+	t.Setenv("ENVIRONMENT", "development")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	handlers.SetRuntimeConfig(cfg)
+	t.Cleanup(func() { handlers.SetRuntimeConfig(config.Config{}) })
+
+	if !handlersCheckIsSpinNotLegal(time.Now().Add(-2 * time.Second)) {
+		t.Error("expected a recent update to be blocked in development")
+	}
+	if handlersCheckIsSpinNotLegal(time.Now().Add(-5 * time.Second)) {
+		t.Error("expected the development cooldown to expire after 4 seconds")
+	}
+}
 
 func TestCheckIsSpinNotLegal(t *testing.T) {
 	// Test case: Last update is today and duration is less than 4 hours

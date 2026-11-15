@@ -42,8 +42,8 @@ func TestRunMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count migrations: %v", err)
 	}
-	if count != 6 {
-		t.Fatalf("Expected 6 migrations to be applied, but count is %d", count)
+	if count != 7 {
+		t.Fatalf("Expected 7 migrations to be applied, but count is %d", count)
 	}
 
 	// Проверяем, что колонка is_active добавлена в таблицу pens
@@ -73,6 +73,7 @@ func TestRunMigrations(t *testing.T) {
 			if dataType != "BOOLEAN" {
 				t.Errorf("Expected is_active column type to be BOOLEAN, but got %s", dataType)
 			}
+			_ = rows.Close()
 			break
 		}
 	}

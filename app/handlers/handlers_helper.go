@@ -7,15 +7,24 @@ import (
 	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
+	"github.com/denis1011101/super_cm_bot/app/config"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
+
+var runtimeConfig config.Config
+
+// SetRuntimeConfig applies the validated configuration during application startup.
+func SetRuntimeConfig(cfg config.Config) {
+	runtimeConfig = cfg
+}
 
 func checkIsSpinNotLegal(lastUpdate time.Time) bool {
 	if !lastUpdate.IsZero() {
 		duration := time.Since(lastUpdate)
+		cooldown := runtimeConfig.SpinCooldown()
 
-		if duration.Hours() < 4 {
-			log.Println("Spin is not legal: less than 4 hours since last update")
+		if duration < cooldown {
+			log.Printf("Spin is not legal: less than %s since last update", cooldown)
 			return true
 		}
 	}
@@ -31,8 +40,8 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 
 	// Подготовка запроса для вставки пользователя в базу данных
 	stmt, err := db.Prepare(`
-		INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count, pen_last_update_at)
-		VALUES (?, ?, ?, ?, 0, 0, CURRENT_TIMESTAMP)
+		INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, handsome_count, unhandsome_count, pen_last_update_at, registered_at)
+		VALUES (?, ?, ?, ?, 0, 0, NULL, ?)
 	`)
 	if err != nil {
 		log.Printf("Error preparing insert statement: %v", err)
@@ -45,7 +54,7 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 	}()
 
 	// Выполнение подготовленного запроса с параметрами и добавление 5 см к размеру пениса
-	_, err = stmt.Exec(userName, userID, chatID, 5)
+	_, err = stmt.Exec(userName, userID, chatID, 5, time.Now())
 	if err != nil {
 		log.Printf("Error inserting user into database: %v", err)
 		return

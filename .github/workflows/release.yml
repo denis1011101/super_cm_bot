@@ -1,0 +1,151 @@
+# Релиз = тег vX.Y.Z + GitHub Release с бинарником `bot` (linux/amd64) во вложении.
+# Бинарник собирает CI из исходников тега, а не лежит в репозитории рукописным.
+#
+# Два входа:
+#   - git tag vX.Y.Z && git push origin vX.Y.Z — тег должен лежать на main;
+#   - Actions → Release → Run workflow — версия считается от последнего тега
+#     (minor / patch / major), релиз режется с текущего main.
+#
+# Описание релиза — заголовки коммитов с прошлого тега, без пересказов.
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Какую часть версии поднять: minor — фичи, patch — правки"
+        type: choice
+        options: [minor, patch, major]
+        default: minor
+
+# Два релиза разом посчитают одну и ту же следующую версию.
+concurrency: release
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    # Фиксируем 24.04 под ОС прод-сервера (Ubuntu 24.04 LTS), чтобы обновление
+    # ubuntu-latest не подняло требуемую версию GLIBC для CGO-сборки.
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || 'main' }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      # По push тег уже есть, по dispatch версию считаем ниже.
+      - name: Resolve tag
+        id: release
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            if ! git merge-base --is-ancestor "$TAG" origin/main; then
+              echo "::error::$TAG is not on main — releases are cut from main only."
+              exit 1
+            fi
+          else
+            TAG=""
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Релиз с красного или ещё идущего коммита нельзя: деплой берёт его бинарник.
+      # Берём самый свежий прогон Go CI на этом SHA без фильтра по status, чтобы
+      # повторный незавершённый прогон не скрылся за старым зелёным.
+      - name: Require green CI
+        run: |
+          SHA=$(git rev-parse HEAD)
+          read -r STATUS CONCLUSION <<< "$(gh api "repos/${{ github.repository }}/actions/workflows/go-ci.yml/runs?head_sha=$SHA&per_page=1" \
+            --jq '.workflow_runs[0] | "\(.status // "none") \(.conclusion // "none")"')"
+          if [[ "$STATUS" == "completed" && "$CONCLUSION" == "success" ]]; then
+            echo "CI passed on ${SHA:0:8}"
+          elif [[ "$STATUS" != "completed" ]]; then
+            echo "::error::Latest Go CI run on ${SHA:0:8} is '$STATUS' (not completed yet) — wait for it."
+            exit 1
+          else
+            echo "::error::Latest Go CI run on ${SHA:0:8} ended with '$CONCLUSION'."
+            exit 1
+          fi
+
+      - name: Compute version
+        id: version
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          LAST=$(git tag --list 'v*' --sort=-v:refname | grep -vx "$TAG" | head -n 1 || true)
+          if [[ -n "$TAG" ]]; then
+            NEXT="$TAG"
+          elif [[ -z "$LAST" ]]; then
+            NEXT="v1.0.0"
+          else
+            IFS=. read -r MAJOR MINOR PATCH <<< "${LAST#v}"
+            case "${{ inputs.bump }}" in
+              major) NEXT="v$((MAJOR + 1)).0.0" ;;
+              minor) NEXT="v$MAJOR.$((MINOR + 1)).0" ;;
+              patch) NEXT="v$MAJOR.$MINOR.$((PATCH + 1))" ;;
+            esac
+          fi
+          echo "last=$LAST" >> "$GITHUB_OUTPUT"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Releasing $NEXT (previous: ${LAST:-none})"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.0
+          check-latest: true
+          cache: true
+          cache-dependency-path: go.sum
+
+      # go-sqlite3 требует CGO, build.sh это проверяет. upx на раннере нет,
+      # build.sh молча пропускает сжатие.
+      - name: Build binary
+        run: |
+          ./scripts/build.sh
+          sha256sum bot | tee bot.sha256
+
+      - name: Create release
+        env:
+          NEXT: ${{ steps.version.outputs.next }}
+          LAST: ${{ steps.version.outputs.last }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          SHA=$(git rev-parse HEAD)
+
+          # Заголовки коммитов без мерж-коммитов. Для первого релиза берём
+          # последние 30, а не всю историю.
+          if [[ -n "$LAST" ]]; then
+            SUBJECTS=$(git log --no-merges --pretty='- %s' "$LAST..$SHA")
+          else
+            SUBJECTS=$(git log --no-merges --pretty='- %s' -n 30 "$SHA")
+          fi
+          if [[ -z "$SUBJECTS" ]]; then
+            SUBJECTS="- No changes"
+          fi
+
+          {
+            echo "## Changes"
+            echo
+            printf '%s\n' "$SUBJECTS"
+            if [[ -n "$LAST" ]]; then
+              echo
+              echo "Full diff: https://github.com/${{ github.repository }}/compare/$LAST...$NEXT"
+            fi
+          } > body.md
+
+          ARGS=(--title "$NEXT" --notes-file body.md)
+          if [[ -z "$TAG" ]]; then
+            # По dispatch тега ещё нет: gh создаст его на этом коммите.
+            ARGS+=(--target "$SHA")
+          fi
+          gh release create "$NEXT" bot bot.sha256 "${ARGS[@]}"
+          echo "https://github.com/${{ github.repository }}/releases/tag/$NEXT" >> "$GITHUB_STEP_SUMMARY"

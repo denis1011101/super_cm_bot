@@ -1,10 +1,12 @@
 #!/bin/bash
-CD_PATH="/root/apps/super_cm_bot"
+CD_PATH="${CD_PATH:-/root/apps/super_cm_bot}"
 BOT_PATH="$CD_PATH/bot"
 LOG_DIR="$CD_PATH/logs"
 LOG_FILE="$LOG_DIR/restart_bot.log"
 NOHUP_OUT="$LOG_DIR/nohup.out"
 REPO="denis1011101/super_cm_bot"
+API_URL="${API_URL:-https://api.github.com}"
+DOWNLOAD_URL="${DOWNLOAD_URL:-https://github.com}"
 
 log() {
     echo "$(date): $1" >> "$LOG_FILE"
@@ -34,33 +36,43 @@ else
     log "Bot restarted with PID $NEW_PID"
 fi
 
-# Pin the commit up front. Everything below - the CI check and the download -
-# refers to this exact SHA, so a push that lands mid-run cannot slip a binary
-# past a check that was made against a different commit.
-if ! COMMIT_JSON=$(gh_api "https://api.github.com/repos/$REPO/commits/main"); then
-    log "Could not reach the commits API. Exiting script."
+# Deploy only published releases: the release workflow builds the binary from
+# the tagged commit after a green CI run and attaches it as `bot` plus
+# `bot.sha256`. A plain push to main therefore rolls nothing out.
+if ! RELEASE_JSON=$(gh_api "$API_URL/repos/$REPO/releases/latest"); then
+    log "Could not reach the releases API. Exiting script."
     exit 0
 fi
-MAIN_SHA=$(printf '%s' "$COMMIT_JSON" | jq -re '.sha' 2>/dev/null)
-# The API silently returns no runs for an abbreviated SHA, so anything that is
-# not a full 40-hex id has to stop the deploy rather than query with it.
-if ! [[ "$MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-    log "Could not resolve main SHA. Exiting script."
-    exit 0
-fi
-REMOTE_URL="https://raw.githubusercontent.com/$REPO/$MAIN_SHA/bot"
 
-# Download once into a temp file: it is both what we hash and what we install,
-# so the two cannot disagree.
+TAG=$(printf '%s' "$RELEASE_JSON" | jq -re '.tag_name' 2>/dev/null)
+# The tag ends up in a download URL, so anything but a plain vX.Y.Z stops here.
+if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    log "Could not resolve the latest release tag. Exiting script."
+    exit 0
+fi
+
+if ! printf '%s' "$RELEASE_JSON" | jq -e '[.assets[].name] | (index("bot") != null and index("bot.sha256") != null)' > /dev/null 2>&1; then
+    log "Release $TAG has no bot binary attached yet. Exiting script."
+    exit 0
+fi
+
+BASE_URL="$DOWNLOAD_URL/$REPO/releases/download/$TAG"
+
+# The checksum is both the "has anything changed" check and the integrity
+# check for what we are about to install.
+TMP_SUM=$(mktemp "$CD_PATH/.bot.sha256.XXXXXX")
 TMP_BOT=$(mktemp "$CD_PATH/.bot.XXXXXX")
-trap 'rm -f "$TMP_BOT"' EXIT
+trap 'rm -f "$TMP_BOT" "$TMP_SUM"' EXIT
 
-if ! curl -sfL -o "$TMP_BOT" "$REMOTE_URL"; then
-    log "Failed to download bot at $MAIN_SHA. Exiting script."
+if ! curl -sfL -o "$TMP_SUM" "$BASE_URL/bot.sha256"; then
+    log "Failed to download bot.sha256 for $TAG. Exiting script."
     exit 0
 fi
-
-REMOTE_HASH=$(sha256sum "$TMP_BOT" | awk '{print $1}')
+EXPECTED_HASH=$(awk '{print $1; exit}' "$TMP_SUM")
+if ! [[ "$EXPECTED_HASH" =~ ^[0-9a-f]{64}$ ]]; then
+    log "bot.sha256 for $TAG is malformed. Exiting script."
+    exit 0
+fi
 
 # Get hash of the current binary file
 if [ -f "$BOT_PATH" ]; then
@@ -69,50 +81,24 @@ else
     LOCAL_HASH=""
 fi
 
-# Check differences between the remote and local binary files
-if [ "$REMOTE_HASH" == "$LOCAL_HASH" ]; then
-    log "File bot has not changed. Exiting script."
+if [ "$EXPECTED_HASH" == "$LOCAL_HASH" ]; then
+    log "File bot has not changed (release $TAG). Exiting script."
     exit 0
 else
-    log "File bot has changed at $MAIN_SHA. Running script."
+    log "Release $TAG differs from the installed bot. Running script."
 fi
 
-# Require every workflow run for this exact commit to be finished and green.
-# Filtering by branch instead would let an older success gate a newer binary,
-# and a commit with no runs at all must block rather than pass.
-if ! RUNS_JSON=$(gh_api "https://api.github.com/repos/$REPO/actions/runs?head_sha=$MAIN_SHA&per_page=100"); then
-    log "Status: could not reach the runs API for $MAIN_SHA. Exiting script."
+if ! curl -sfL -o "$TMP_BOT" "$BASE_URL/bot"; then
+    log "Failed to download bot for $TAG. Exiting script."
     exit 0
 fi
 
-# The whole admission decision lives in one jq -e expression, so the shell never
-# compares values that a broken response could have left empty. Anything but a
-# well-formed JSON object with a complete, green run list exits jq non-zero -
-# parse errors, HTML, an empty body and a false verdict all land in the same
-# branch, and the deploy stops.
-ADMIT_FILTER='
-    (type == "object")
-    and (.total_count | type == "number")
-    and (.workflow_runs | type == "array")
-    and ((.workflow_runs | length) > 0)
-    and (.total_count == (.workflow_runs | length))
-    and (all(.workflow_runs[]; .status == "completed" and .conclusion == "success"))
-'
-if ! printf '%s' "$RUNS_JSON" | jq -e "$ADMIT_FILTER" > /dev/null 2>&1; then
-    # Diagnostics only - this must never widen what was admitted above.
-    REASON=$(printf '%s' "$RUNS_JSON" | jq -r '
-        if (type != "object") or (.workflow_runs | type != "array") then "malformed response"
-        elif (.workflow_runs | length) == 0 then "no workflow run"
-        elif (.total_count != (.workflow_runs | length)) then "run list is paginated (\(.total_count) total)"
-        elif any(.workflow_runs[]; .status != "completed") then "still in progress: " + ([.workflow_runs[] | select(.status != "completed") | .name] | join(", "))
-        else "not green: " + ([.workflow_runs[] | "\(.name)=\(.conclusion)"] | join(", "))
-        end' 2>/dev/null) || REASON=""
-    log "Status: ${REASON:-unreadable response} for $MAIN_SHA. Exiting script."
+REMOTE_HASH=$(sha256sum "$TMP_BOT" | awk '{print $1}')
+if [ "$REMOTE_HASH" != "$EXPECTED_HASH" ]; then
+    log "Checksum mismatch for $TAG (expected $EXPECTED_HASH, got $REMOTE_HASH). Exiting script."
     exit 0
 fi
-
-RUN_COUNT=$(printf '%s' "$RUNS_JSON" | jq -r '.workflow_runs | length')
-log "Status: success for $MAIN_SHA ($RUN_COUNT run(s)). Proceeding with the script."
+log "Checksum verified for $TAG. Proceeding with the script."
 
 # Kill all processes related to the bot
 BOT_PIDS=$(pgrep -f "^$BOT_PATH$")
@@ -132,7 +118,7 @@ fi
 
 # Install the binary we already downloaded and verified
 mv -f "$TMP_BOT" "$BOT_PATH"
-log "Bot file installed from $MAIN_SHA."
+log "Bot file installed from release $TAG."
 
 # Make the bot file executable
 chmod +x $BOT_PATH

@@ -21,7 +21,8 @@ go mod download
 3. Create a `.env` file based on `.env_example` and add the following:
 ```sh
 cp .env_example .env
-# Open .env and add BOT_TOKEN и SPECIFIC_CHAT_ID
+# Open .env and add BOT_TOKEN, SPECIFIC_CHAT_ID and GEMINI_API_KEY
+# ENVIRONMENT defaults to production; use development for local testing
 ```
 
 ## Run
@@ -45,8 +46,8 @@ go test -timeout=60s -count=1 ./tests
 3. Create test group
 4. Add test bot to test group
 5. Get group_id https://stackoverflow.com/questions/32423837/telegram-bot-how-to-get-a-group-chat-id
-6. Put .env
-7. Run bot
+6. Put `.env` and set `ENVIRONMENT=development` to use a 4-second command cooldown. Optionally set `DEV_FAKE_USERS=5` to create five test participants on startup, and `DEV_USER_ID=<your telegram id>` (optionally `DEV_USER_NAME`) to register your own account at startup, and `DEV_RESET_DB=true` to wipe the database on start (turn it off after one run)
+7. Run the bot
 
 ## Usage
 
@@ -77,3 +78,16 @@ To build new version, run command:
 ## License
 
 [LICENSE](LICENSE)
+
+## Release
+
+A release is a tag `vX.Y.Z` on `main` plus a GitHub Release with the `bot` binary (linux/amd64, built by CI) and `bot.sha256` attached. The release notes list the commit titles since the previous tag.
+
+- `git tag vX.Y.Z && git push origin vX.Y.Z`, or
+- Actions → Release → Run workflow (choose minor/patch/major; the version is computed from the last tag).
+
+The release is refused unless the latest Go CI run on that commit is green.
+
+Deploy: `scripts/restart_bot.sh` (cron) downloads `bot` from `releases/latest`, verifies it against `bot.sha256` and restarts the bot only when the checksum differs from the installed binary. A plain push to `main` deploys nothing.
+
+Before the first release-based deploy, update `scripts/restart_bot.sh` on the server manually (`git pull` or copy the file), because cron runs the local copy of the script.

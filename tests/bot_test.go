@@ -90,9 +90,8 @@ func TestArchiveInactiveUsers_RecentUserStaysActive(t *testing.T) {
 }
 
 // TestArchiveInactiveUsers_NullLastUpdateArchived — пользователь с NULL pen_last_update_at
-// ДОЛЖЕН архивироваться. NULL остаётся только у легаси-записей, созданных до того, как
-// registerBot начал ставить pen_last_update_at = CURRENT_TIMESTAMP: спина у них не было
-// никогда, но из-за SQLite-семантики NULL < date = NULL архиватор их раньше пропускал,
+// ДОЛЖЕН архивироваться. NULL означает, что пользователь ещё не завершил ни одного спина;
+// из-за SQLite-семантики NULL < date = NULL архиватор такие записи раньше пропускал,
 // и они бесконечно участвовали в giga/unh.
 func TestArchiveInactiveUsers_NullLastUpdateArchived(t *testing.T) {
 	db := setupBotDB(t)
@@ -258,5 +257,119 @@ func TestSendMessageWithoutMemoryDoesNotRecord(t *testing.T) {
 	}
 	if context != "" {
 		t.Fatalf("Expected empty memory, got %q", context)
+	}
+}
+
+// TestRefreshUsernames_UpdatesWithSingleConnection — регрессия: UPDATE внутри RefreshUsernames
+// не должен блокироваться на единственном соединении пула (MaxOpenConns=1).
+func TestRefreshUsernames_UpdatesWithSingleConnection(t *testing.T) {
+	db := setupBotDB(t)
+	insertPen(t, db, 1, 100, nil)
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			body := `{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot","username":"test_bot"}}`
+			if strings.Contains(r.URL.Path, "/getChatMember") {
+				body = `{"ok":true,"result":{"status":"member","user":{"id":1,"is_bot":false,"first_name":"U","username":"new_name"}}}`
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		}),
+	}
+	bot, err := tgbotapi.NewBotAPIWithClient("fake-token", "https://telegram.test/bot%s/%s", client)
+	if err != nil {
+		t.Fatalf("mock bot: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- app.RefreshUsernames(db, bot) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RefreshUsernames: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RefreshUsernames deadlocked")
+	}
+
+	var name string
+	if err := db.QueryRow("SELECT pen_name FROM pens WHERE tg_pen_id = 1").Scan(&name); err != nil {
+		t.Fatal(err)
+	}
+	if name != "new_name" {
+		t.Fatalf("pen_name = %q, want new_name", name)
+	}
+}
+
+func setRegisteredAt(t *testing.T, db *sql.DB, userID int64, at time.Time) {
+	t.Helper()
+	if _, err := db.Exec("UPDATE pens SET registered_at = ? WHERE tg_pen_id = ?", at, userID); err != nil {
+		t.Fatalf("setRegisteredAt: %v", err)
+	}
+}
+
+// TestArchiveInactiveUsers_NewRegistrationWithoutSpinStaysActive — новичок ещё не крутил /pen
+// (pen_last_update_at = NULL), но зарегистрирован только что: архивироваться нельзя.
+func TestArchiveInactiveUsers_NewRegistrationWithoutSpinStaysActive(t *testing.T) {
+	db := setupBotDB(t)
+	insertPen(t, db, 10, 100, nil)
+	setRegisteredAt(t, db, 10, time.Now())
+
+	if err := app.ArchiveInactiveUsers(db); err != nil {
+		t.Fatalf("ArchiveInactiveUsers: %v", err)
+	}
+	if !isActiveFor(t, db, 10, 100) {
+		t.Fatal("freshly registered user without a spin must stay active")
+	}
+}
+
+// TestArchiveInactiveUsers_OldRegistrationWithoutSpinArchived — не крутил /pen и зарегистрирован
+// больше 180 дней назад: архивируется.
+func TestArchiveInactiveUsers_OldRegistrationWithoutSpinArchived(t *testing.T) {
+	db := setupBotDB(t)
+	insertPen(t, db, 11, 100, nil)
+	setRegisteredAt(t, db, 11, time.Now().AddDate(0, 0, -181))
+
+	if err := app.ArchiveInactiveUsers(db); err != nil {
+		t.Fatalf("ArchiveInactiveUsers: %v", err)
+	}
+	if isActiveFor(t, db, 11, 100) {
+		t.Fatal("user registered 181 days ago without a spin should be archived")
+	}
+}
+
+// TestMigration7_BackfillsRegisteredAt — у существующих строк registered_at берётся из последнего
+// спина, а у NULL — момент миграции, чтобы старые «NULL»-новички не вылетели сразу.
+func TestMigration7_BackfillsRegisteredAt(t *testing.T) {
+	db := setupBotDB(t)
+	if _, err := db.Exec("ALTER TABLE pens DROP COLUMN registered_at"); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if _, err := db.Exec("DELETE FROM migrations WHERE id = 7"); err != nil {
+		t.Fatalf("delete migration record: %v", err)
+	}
+	spun := time.Now().AddDate(0, 0, -30).Format("2006-01-02 15:04:05Z07:00")
+	insertPen(t, db, 20, 100, spun)
+	insertPen(t, db, 21, 100, nil)
+
+	if err := app.RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+
+	var spunReg, nullReg sql.NullString
+	if err := db.QueryRow("SELECT registered_at FROM pens WHERE tg_pen_id = 20").Scan(&spunReg); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow("SELECT registered_at FROM pens WHERE tg_pen_id = 21").Scan(&nullReg); err != nil {
+		t.Fatal(err)
+	}
+	if !spunReg.Valid || spunReg.String == "" || !nullReg.Valid || nullReg.String == "" {
+		t.Fatalf("registered_at must be backfilled, got %+v / %+v", spunReg, nullReg)
+	}
+
+	if err := app.ArchiveInactiveUsers(db); err != nil {
+		t.Fatalf("ArchiveInactiveUsers: %v", err)
+	}
+	if !isActiveFor(t, db, 21, 100) {
+		t.Fatal("legacy NULL user gets a 180-day grace period after migration")
 	}
 }

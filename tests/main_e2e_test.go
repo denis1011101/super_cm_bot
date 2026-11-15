@@ -26,6 +26,23 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
 
+type synchronizedBuffer struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (b *synchronizedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(p)
+}
+
+func (b *synchronizedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
+
 func TestMain(m *testing.M) {
 	// Установка фиктивного токена
 	if err := os.Setenv("BOT_TOKEN", "fake-token"); err != nil {
@@ -66,9 +83,8 @@ func TestBotE2E(t *testing.T) {
 		t.Fatalf("Expected table name 'pens', but got %s", tableName)
 	}
 
-	// Вставляем тестовые данные.
-	// 33333333 добавляем с давней датой — после фикса registerBot ставит CURRENT_TIMESTAMP,
-	// поэтому свежезарегистрированный пользователь немедленно попадает под кулдаун /pen.
+	// Вставляем тестовые данные с давней датой, чтобы существующие пользователи
+	// могли сразу выполнить команды.
 	insertDataQuery := `
     INSERT INTO pens (pen_name, tg_pen_id, tg_chat_id, pen_length, pen_last_update_at, handsome_count, handsome_last_update_at, unhandsome_count, unhandsome_last_update_at)
     VALUES ('testuser1', 11111111, -987654321, 5, '2024-09-13 08:53:49+00:00', 10, '2024-09-18 21:04:00+00:00', 8, '2024-09-18 21:04:21+00:00'),
@@ -122,9 +138,12 @@ func TestBotE2E(t *testing.T) {
 		t.Fatalf("Error creating bot: %v", err)
 	}
 
-	// Перенаправляем логи в буфер
-	var logBuffer bytes.Buffer
+	// Перенаправляем логи в потокобезопасный буфер: обработчик пишет в него
+	// из отдельной горутины, а подтесты периодически читают накопленные логи.
+	var logBuffer synchronizedBuffer
+	previousLogOutput := log.Writer()
 	log.SetOutput(&logBuffer)
+	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
 
 	// Создаем канал обновлений
 	updates := make(chan tgbotapi.Update, 1)
@@ -144,6 +163,11 @@ func TestBotE2E(t *testing.T) {
 	// Запускаем бота в отдельной горутине
 	go func() {
 		for update := range updates {
+			if update.MyChatMember != nil { // Обработка добавления бота в чат
+				handlers.HandleBotAddition(update, bot)
+				continue
+			}
+
 			if update.Message != nil {
 				chatID := update.Message.Chat.ID
 				if chatID == specificChatID {
@@ -158,8 +182,6 @@ func TestBotE2E(t *testing.T) {
 						echo := tgbotapi.NewMessage(chatID, update.Message.Text)
 						_, _ = bot.Send(echo)
 					}
-				} else if update.MyChatMember != nil { // Обработка добавления бота в чат
-					handlers.HandleBotAddition(update, bot)
 				}
 			}
 		}
@@ -176,6 +198,24 @@ func TestBotE2E(t *testing.T) {
 
 		// Проверяем, что новый пользователь зарегистрирован с длиной 5 см
 		testutils.CheckPenLength(t, db, 44444444, nil, 5)
+		var lastUpdate sql.NullTime
+		if err := db.QueryRow("SELECT pen_last_update_at FROM pens WHERE tg_pen_id = ? AND tg_chat_id = ?", 44444444, specificChatID).Scan(&lastUpdate); err != nil {
+			t.Fatalf("Failed to read initial update time: %v", err)
+		}
+		if lastUpdate.Valid {
+			t.Fatal("new user should not have a spin timestamp before the first /pen")
+		}
+	})
+
+	t.Run("FirstPenCommandAfterRegistration", func(t *testing.T) {
+		testutils.SendMessage(t, updates, specificChatID, 44444444, "/pen")
+		time.Sleep(1 * time.Second)
+
+		penInfo, err := testutils.ExtractPenInfoFromLogs(t, &logBuffer, "/pen")
+		if err != nil {
+			t.Fatalf("Error extracting first spin info: %v", err)
+		}
+		testutils.CheckPenLength(t, db, 44444444, nil, penInfo.NewSize)
 	})
 
 	t.Run("KlewoEchoWithoutReply", func(t *testing.T) {
