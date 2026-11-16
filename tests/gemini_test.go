@@ -1020,9 +1020,9 @@ func TestGeminiAgentDoesNotCallOtherBotsSelf(t *testing.T) {
 	}
 }
 
-// TestGeminiAgentDefaultModelPoolRotation verifies that starting from default
+// TestGeminiAgentDefaultModelPoolRotation verifies that starting from
 // gemini-3.7-flash with no fallback models specified walks the pool down and
-// rotates round to 3.8: 3.7 -> 3.6 -> 3.5 -> 3.5-lite -> 3.8.
+// rotates round to 4-hydrogen and 3.8: 3.7 -> 3.6 -> 3.5 -> 3.5-lite -> 4-hydrogen -> 3.8.
 func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 	db := setupGeminiDB(t)
 	var (
@@ -1071,6 +1071,7 @@ func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 		"gemini-3.6-flash",
 		"gemini-3.5-flash",
 		"gemini-3.5-flash-lite",
+		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
 	}
 	mu.Lock()
@@ -1081,7 +1082,7 @@ func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 }
 
 // TestGeminiAgentDefaultModelPoolRotation_FromFirstModel verifies rotation
-// starting from the first model in pool (gemini-3.8-flash).
+// starting from the first model in pool (gemini-4-hydrogen).
 func TestGeminiAgentDefaultModelPoolRotation_FromFirstModel(t *testing.T) {
 	db := setupGeminiDB(t)
 	var (
@@ -1110,7 +1111,7 @@ func TestGeminiAgentDefaultModelPoolRotation_FromFirstModel(t *testing.T) {
 		Client:         server.Client(),
 		APIKey:         "test-key",
 		APIBaseURL:     server.URL,
-		Model:          "gemini-3.8-flash",
+		Model:          "gemini-4-hydrogen",
 		FallbackModels: nil,
 		MaxAttempts:    1,
 		RetryDelay:     func(int) time.Duration { return 0 },
@@ -1126,6 +1127,7 @@ func TestGeminiAgentDefaultModelPoolRotation_FromFirstModel(t *testing.T) {
 	}
 
 	want := []string{
+		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
 		"gemini-3.7-flash",
 		"gemini-3.6-flash",
@@ -1186,6 +1188,7 @@ func TestGeminiAgentDefaultModelPoolRotation_FromLastModel(t *testing.T) {
 
 	want := []string{
 		"gemini-3.5-flash-lite",
+		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
 		"gemini-3.7-flash",
 		"gemini-3.6-flash",
@@ -1675,21 +1678,21 @@ func TestGeminiAgentStatusHeartbeat_PublishesInitialAndStops(t *testing.T) {
 // resolution, default fallbacks rotation, and fallback filtering.
 func TestGeminiModelResolution_EdgeCases(t *testing.T) {
 	// resolveGeminiModel defaults
-	if got := resolveGeminiModel(""); got != "gemini-3.8-flash" {
-		t.Fatalf("empty model should default to gemini-3.8-flash, got %q", got)
+	if got := resolveGeminiModel(""); got != "gemini-4-hydrogen" {
+		t.Fatalf("empty model should default to gemini-4-hydrogen, got %q", got)
 	}
-	if got := resolveGeminiModel("   "); got != "gemini-3.8-flash" {
-		t.Fatalf("whitespace model should default to gemini-3.8-flash, got %q", got)
+	if got := resolveGeminiModel("   "); got != "gemini-4-hydrogen" {
+		t.Fatalf("whitespace model should default to gemini-4-hydrogen, got %q", got)
 	}
-	if got := resolveGeminiModel("not-gemini-model"); got != "gemini-3.8-flash" {
-		t.Fatalf("invalid model should default to gemini-3.8-flash, got %q", got)
+	if got := resolveGeminiModel("not-gemini-model"); got != "gemini-4-hydrogen" {
+		t.Fatalf("invalid model should default to gemini-4-hydrogen, got %q", got)
 	}
-	if got := resolveGeminiModel("models/gemini-3.8-flash-latest"); got != "gemini-3.8-flash" {
-		t.Fatalf("expected normalized gemini-3.8-flash, got %q", got)
+	if got := resolveGeminiModel("models/gemini-4-hydrogen-latest"); got != "gemini-4-hydrogen" {
+		t.Fatalf("expected normalized gemini-4-hydrogen, got %q", got)
 	}
 
 	// defaultGeminiFallbacks rotation
-	want37 := []string{"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash"}
+	want37 := []string{"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-4-hydrogen", "gemini-3.8-flash"}
 	got37 := defaultGeminiFallbacks("gemini-3.7-flash")
 	if strings.Join(got37, ",") != strings.Join(want37, ",") {
 		t.Fatalf("default fallbacks for 3.7: got %v want %v", got37, want37)
@@ -1719,5 +1722,50 @@ func TestGeminiModelResolution_EdgeCases(t *testing.T) {
 	wantMixed := []string{"gemini-3.6-flash", "gemini-3.5-flash"}
 	if strings.Join(mixed, ",") != strings.Join(wantMixed, ",") {
 		t.Fatalf("expected %v, got %v", wantMixed, mixed)
+	}
+}
+
+// TestGeminiAgentSkipsGoogleSearchForGemini4 verifies that gemini-4* models do
+// not send the google_search tool (which requires a paid tier on Gemini 4).
+func TestGeminiAgentSkipsGoogleSearchForGemini4(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	var requests atomic.Int32
+	var sawTools atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "google_search") {
+			sawTools.Store(true)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ без поиска"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:          db,
+		Client:      server.Client(),
+		APIKey:      "test-key",
+		APIBaseURL:  server.URL,
+		Model:       "gemini-4-hydrogen",
+		MaxAttempts: 1,
+		RetryDelay:  func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100042)
+	msg := geminiTestMessage(chatID)
+	msg.Text = "кто сейчас президент?"
+	if !agent.TryRespondImmediate(msg) {
+		t.Fatal("message should be processed")
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ без поиска" {
+		t.Fatalf("unexpected reply %q", reply)
+	}
+	if sawTools.Load() {
+		t.Fatal("gemini-4-hydrogen must not send google_search tools")
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("expected exactly 1 request without search retry, got %d", got)
 	}
 }

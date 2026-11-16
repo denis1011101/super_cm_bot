@@ -35,10 +35,11 @@ const (
 	geminiDelayRange         = 2 * time.Second
 	geminiMaxAttempts        = 3
 	geminiRetryBackoff       = time.Second
-	defaultGeminiModel       = "gemini-3.8-flash"
+	defaultGeminiModel       = "gemini-4-hydrogen"
 )
 
 var defaultGeminiPool = []string{
+	"gemini-4-hydrogen",
 	"gemini-3.8-flash",
 	"gemini-3.7-flash",
 	"gemini-3.6-flash",
@@ -110,10 +111,11 @@ func (a GeminiGoogleSearchAdapter) BuildRequest(_ context.Context, _ string) (*G
 	return &GeminiSearchRequest{Tools: a.BuildTools()}, nil
 }
 
-// isGemini3 returns true for gemini-3* model names where google_search
-// tool causes MALFORMED_FUNCTION_CALL and must not be sent.
-func isGemini3(model string) bool {
-	return strings.HasPrefix(model, "gemini-3")
+// skipsGoogleSearch returns true for models where the google_search tool
+// should not be sent (gemini-3* causes MALFORMED_FUNCTION_CALL; gemini-4*
+// grounding requires a paid tier and fails on the free tier).
+func skipsGoogleSearch(model string) bool {
+	return strings.HasPrefix(model, "gemini-3") || strings.HasPrefix(model, "gemini-4")
 }
 
 type pendingGeminiResponse struct {
@@ -885,7 +887,7 @@ func (a *GeminiAgent) callLLM(ctx context.Context, systemPrompt, userPrompt, sea
 		},
 	}
 
-	if useSearch && a.search != nil && !isGemini3(a.model) {
+	if useSearch && a.search != nil && !skipsGoogleSearch(a.model) {
 		searchReq, err := a.search.BuildRequest(ctx, searchQuery)
 		if err != nil {
 			log.Printf("GeminiAgent.callLLM: search adapter error: %v", err)
