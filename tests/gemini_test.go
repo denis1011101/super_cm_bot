@@ -1048,8 +1048,8 @@ func TestGeminiAgentDoesNotCallOtherBotsSelf(t *testing.T) {
 }
 
 // TestGeminiAgentDefaultModelPoolRotation verifies that starting from
-// gemini-3.7-flash with no fallback models specified walks the pool down and
-// rotates round to 4-hydrogen and 3.8: 3.7 -> 3.6 -> 3.5 -> 3.5-lite -> 4-hydrogen -> 3.8.
+// gemini-3.6-flash with no fallback models specified walks the pool down and
+// rotates round to 4-hydrogen and 3.8: 3.6 -> 3.5-lite -> 4-hydrogen -> 3.8.
 func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 	db := setupGeminiDB(t)
 	var (
@@ -1078,7 +1078,7 @@ func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 		Client:         server.Client(),
 		APIKey:         "test-key",
 		APIBaseURL:     server.URL,
-		Model:          "gemini-3.7-flash",
+		Model:          "gemini-3.6-flash",
 		FallbackModels: nil, // default rotation from pool
 		MaxAttempts:    1,
 		RetryDelay:     func(int) time.Duration { return 0 },
@@ -1094,9 +1094,7 @@ func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 	}
 
 	want := []string{
-		"gemini-3.7-flash",
 		"gemini-3.6-flash",
-		"gemini-3.5-flash",
 		"gemini-3.5-flash-lite",
 		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
@@ -1156,9 +1154,7 @@ func TestGeminiAgentDefaultModelPoolRotation_FromFirstModel(t *testing.T) {
 	want := []string{
 		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
-		"gemini-3.7-flash",
 		"gemini-3.6-flash",
-		"gemini-3.5-flash",
 		"gemini-3.5-flash-lite",
 	}
 	mu.Lock()
@@ -1183,13 +1179,13 @@ func TestGeminiAgentDefaultModelPoolRotation_FromLastModel(t *testing.T) {
 		models = append(models, model)
 		mu.Unlock()
 
-		if model != "gemini-3.5-flash" {
+		if model != "gemini-3.6-flash" {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ от 3.5"}]}}]}`))
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ от 3.6"}]}}]}`))
 	}))
 	defer server.Close()
 
@@ -1209,17 +1205,15 @@ func TestGeminiAgentDefaultModelPoolRotation_FromLastModel(t *testing.T) {
 		t.Fatal("message should be processed")
 	}
 
-	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ от 3.5" {
-		t.Fatalf("expected the answer from 3.5, got %q", reply)
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ от 3.6" {
+		t.Fatalf("expected the answer from 3.6, got %q", reply)
 	}
 
 	want := []string{
 		"gemini-3.5-flash-lite",
 		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
-		"gemini-3.7-flash",
 		"gemini-3.6-flash",
-		"gemini-3.5-flash",
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -1719,13 +1713,16 @@ func TestGeminiModelResolution_EdgeCases(t *testing.T) {
 	}
 
 	// defaultGeminiFallbacks rotation
-	want37 := []string{"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-4-hydrogen", "gemini-3.8-flash"}
-	got37 := defaultGeminiFallbacks("gemini-3.7-flash")
-	if strings.Join(got37, ",") != strings.Join(want37, ",") {
-		t.Fatalf("default fallbacks for 3.7: got %v want %v", got37, want37)
+	want36 := []string{"gemini-3.5-flash-lite", "gemini-4-hydrogen", "gemini-3.8-flash"}
+	got36 := defaultGeminiFallbacks("gemini-3.6-flash")
+	if strings.Join(got36, ",") != strings.Join(want36, ",") {
+		t.Fatalf("default fallbacks for 3.6: got %v want %v", got36, want36)
 	}
 
-	// Model outside pool has no default fallbacks
+	// Deprecated/redirected models outside pool have no default fallbacks
+	if got := defaultGeminiFallbacks("gemini-3.7-flash"); got != nil {
+		t.Fatalf("removed model 3.7 should have nil fallbacks, got %v", got)
+	}
 	if got := defaultGeminiFallbacks("gemini-2.5-pro"); got != nil {
 		t.Fatalf("model outside pool should have nil fallbacks, got %v", got)
 	}
