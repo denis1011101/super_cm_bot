@@ -36,6 +36,7 @@ const (
 	geminiMaxAttempts        = 3
 	geminiRetryBackoff       = time.Second
 	defaultGeminiModel       = "gemini-4-hydrogen"
+	defaultGeminiSearchModel = "gemini-2.5-flash-lite"
 )
 
 var defaultGeminiPool = []string{
@@ -73,6 +74,8 @@ type GeminiAgentConfig struct {
 	Search             SearchAdapter
 	Model              string
 	FallbackModels     []string
+	SearchModel        string
+	DisableSearch      bool
 	APIKey             string
 	APIBaseURL         string
 	MemoryWindow       time.Duration
@@ -83,22 +86,16 @@ type GeminiAgentConfig struct {
 	RetryDelay         func(attempt int) time.Duration
 }
 
+var geminiSearchIntentRe = regexp.MustCompile(
+	`(?i)(?:^|[^а-яёa-z0-9])(поищи|загугли|погугли|гугли|(?:найди|проверь|посмотри|глянь)[\s,]+(?:[^.?!\n]{0,40}\s+)?в\s+(?:интернете|инете|инет|сети)|что\s+(?:пишут|говорят)\s+в\s+(?:интернете|инете|сети))(?:[^а-яёa-z0-9]|$)`,
+)
+
 func (GeminiGoogleSearchAdapter) ShouldSearch(userText string) bool {
-	text := strings.ToLower(strings.TrimSpace(userText))
+	text := strings.TrimSpace(userText)
 	if text == "" {
 		return false
 	}
-
-	searchHints := []string{
-		"в интернете", "в инете", "в инет", "интернет", "поищи", "поиск",
-	}
-	for _, hint := range searchHints {
-		if strings.Contains(text, hint) {
-			return true
-		}
-	}
-
-	return strings.Contains(text, "?")
+	return geminiSearchIntentRe.MatchString(text)
 }
 
 func (GeminiGoogleSearchAdapter) BuildTools() []GeminiTool {
@@ -130,6 +127,7 @@ type GeminiAgent struct {
 	search         SearchAdapter
 	model          string
 	fallbackModels []string
+	searchModel    string
 	apiKey         string
 	apiBaseURL     string
 	memoryWindow   time.Duration
@@ -157,11 +155,15 @@ func NewGeminiAgent(db *sql.DB, bot *tgbotapi.BotAPI) *GeminiAgent {
 	if raw, ok := os.LookupEnv("GEMINI_FALLBACK_MODEL"); ok {
 		fallbackModels = strings.Split(raw, ",")
 	}
+	searchModel, searchSet := os.LookupEnv("GEMINI_SEARCH_MODEL")
+	disableSearch := searchSet && strings.TrimSpace(searchModel) == ""
 	return NewGeminiAgentWithConfig(GeminiAgentConfig{
 		DB:             db,
 		Bot:            bot,
 		Model:          os.Getenv("GEMINI_MODEL"),
 		FallbackModels: fallbackModels,
+		SearchModel:    searchModel,
+		DisableSearch:  disableSearch,
 		APIKey:         os.Getenv("GEMINI_API_KEY"),
 	})
 }
@@ -180,6 +182,7 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 		search = GeminiGoogleSearchAdapter{}
 	}
 	model := resolveGeminiModel(cfg.Model)
+	searchModel := resolveGeminiSearchModel(cfg.SearchModel, cfg.DisableSearch)
 	apiBaseURL := strings.TrimRight(cfg.APIBaseURL, "/")
 	if apiBaseURL == "" {
 		apiBaseURL = "https://generativelanguage.googleapis.com"
@@ -219,6 +222,7 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 		search:           search,
 		model:            model,
 		fallbackModels:   fallbackModels,
+		searchModel:      searchModel,
 		apiKey:           cfg.APIKey,
 		apiBaseURL:       apiBaseURL,
 		memoryWindow:     memoryWindow,
@@ -887,19 +891,26 @@ func (a *GeminiAgent) callLLM(ctx context.Context, systemPrompt, userPrompt, sea
 		},
 	}
 
-	if useSearch && a.search != nil && !skipsGoogleSearch(a.model) {
+	if useSearch && a.search != nil && a.searchModel != "" && !skipsGoogleSearch(a.searchModel) {
 		searchReq, err := a.search.BuildRequest(ctx, searchQuery)
 		if err != nil {
 			log.Printf("GeminiAgent.callLLM: search adapter error: %v", err)
 		} else if searchReq != nil && len(searchReq.Tools) > 0 {
 			reqData.Tools = searchReq.Tools
-			reply, err := a.executeGenerateContent(ctx, reqData)
+			reply, err := a.executeGenerateContentWithModel(ctx, a.searchModel, reqData)
 			if err == nil {
-				log.Printf("GeminiAgent.callLLM: answered by model %s (with search)", a.model)
-				a.publishStatus(agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone, "answered by "+a.model)
+				log.Printf("GeminiAgent.callLLM: answered by search model %s", a.searchModel)
+				a.publishStatus(agentbus.HealthOK, agentbus.QuotaOK, agentbus.ErrNone, "answered by "+a.searchModel)
 				return reply, nil
 			}
-			log.Printf("GeminiAgent.callLLM: search request FAILED, retrying without tools: %v", err)
+			if ctx.Err() != nil {
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					a.publishClassified(ctx.Err())
+				}
+				return "", ctx.Err()
+			}
+			log.Printf("GeminiAgent.callLLM: search request on %s FAILED, falling back to %s without tools: %v", a.searchModel, a.model, err)
+			reqData.SystemInstruction.Parts[0].Text += "\n\nПримечание: поиск в интернете сейчас недоступен, ответь только по тем данным, в которых уверен, и честно скажи, если актуальной информации нет."
 		}
 	}
 
@@ -1096,6 +1107,25 @@ func resolveGeminiModel(raw string) string {
 	m := normalizeGeminiModel(raw)
 	if m == "" {
 		return defaultGeminiModel
+	}
+	return m
+}
+
+// resolveGeminiSearchModel returns the model used when a search intent is
+// detected. If disabled is true, search routing is turned off (""). If raw is
+// empty, it defaults to defaultGeminiSearchModel; an invalid non-empty value
+// disables search routing instead of falling back to a non-search model.
+func resolveGeminiSearchModel(raw string, disabled bool) string {
+	if disabled {
+		return ""
+	}
+	if strings.TrimSpace(raw) == "" {
+		return defaultGeminiSearchModel
+	}
+	m := normalizeGeminiModel(raw)
+	if m == "" {
+		log.Printf("resolveGeminiSearchModel: invalid GEMINI_SEARCH_MODEL %q, disabling search routing", raw)
+		return ""
 	}
 	return m
 }
