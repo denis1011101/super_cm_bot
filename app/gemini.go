@@ -1047,10 +1047,6 @@ func isModelUnavailableGeminiError(err error) bool {
 	return false
 }
 
-func (a *GeminiAgent) executeGenerateContent(ctx context.Context, reqData GeminiRequest) (string, error) {
-	return a.executeGenerateContentWithModel(ctx, a.model, reqData)
-}
-
 func (a *GeminiAgent) executeGenerateContentWithModel(ctx context.Context, model string, reqData GeminiRequest) (string, error) {
 	bContent, err := json.Marshal(reqData)
 	if err != nil {
@@ -1072,7 +1068,7 @@ func (a *GeminiAgent) executeGenerateContentWithModel(ctx context.Context, model
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil {
-			log.Printf("GeminiAgent.executeGenerateContent: resp.Body.Close error: %v", cerr)
+			log.Printf("GeminiAgent.executeGenerateContentWithModel: resp.Body.Close error: %v", cerr)
 		}
 	}()
 
