@@ -1,7 +1,9 @@
 package tests
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +45,12 @@ func normalizeGeminiModel(model string) string
 
 //go:linkname resolveGeminiModel github.com/denis1011101/super_cm_bot/app.resolveGeminiModel
 func resolveGeminiModel(raw string) string
+
+//go:linkname resolveGeminiSearchModel github.com/denis1011101/super_cm_bot/app.resolveGeminiSearchModel
+func resolveGeminiSearchModel(raw string, disabled bool) string
+
+//go:linkname geminiAgentCallLLM github.com/denis1011101/super_cm_bot/app.(*GeminiAgent).callLLM
+func geminiAgentCallLLM(a *app.GeminiAgent, ctx context.Context, systemPrompt, userPrompt, searchQuery string, useSearch bool) (string, error)
 
 //go:linkname defaultGeminiFallbacks github.com/denis1011101/super_cm_bot/app.defaultGeminiFallbacks
 func defaultGeminiFallbacks(primary string) []string
@@ -628,11 +636,30 @@ func TestNextGeminiMemoryCleanupAt(t *testing.T) {
 
 func TestGoogleSearchAdapter(t *testing.T) {
 	adapter := app.GeminiGoogleSearchAdapter{}
-	if !adapter.ShouldSearch("кто сейчас президент?") {
-		t.Fatalf("expected search for explicit search-like prompt")
+	for _, prompt := range []string{
+		"поищи кто сейчас президент?",
+		"загугли курс доллара",
+		"что пишут в интернете про релиз?",
+		"найди в сети рецепт",
+		"найди актуальный курс доллара в сети",
+		"посмотри, пожалуйста, в сети курс доллара",
+	} {
+		if !adapter.ShouldSearch(prompt) {
+			t.Fatalf("expected search for explicit search prompt %q", prompt)
+		}
 	}
-	if adapter.ShouldSearch("лол") {
-		t.Fatalf("did not expect search for casual short prompt")
+	for _, prompt := range []string{
+		"кто сейчас президент?",
+		"как дела?",
+		"объясни бинарный поиск",
+		"почему интернет тормозит?",
+		"я читал в интернете, что это миф",
+		"почему в интернете столько рекламы?",
+		"лол",
+	} {
+		if adapter.ShouldSearch(prompt) {
+			t.Fatalf("did not expect search for non-search prompt %q", prompt)
+		}
 	}
 
 	tools := adapter.BuildTools()
@@ -1021,8 +1048,8 @@ func TestGeminiAgentDoesNotCallOtherBotsSelf(t *testing.T) {
 }
 
 // TestGeminiAgentDefaultModelPoolRotation verifies that starting from
-// gemini-3.7-flash with no fallback models specified walks the pool down and
-// rotates round to 4-hydrogen and 3.8: 3.7 -> 3.6 -> 3.5 -> 3.5-lite -> 4-hydrogen -> 3.8.
+// gemini-3.6-flash with no fallback models specified walks the pool down and
+// rotates round to 4-hydrogen and 3.8: 3.6 -> 3.5-lite -> 4-hydrogen -> 3.8.
 func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 	db := setupGeminiDB(t)
 	var (
@@ -1051,7 +1078,7 @@ func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 		Client:         server.Client(),
 		APIKey:         "test-key",
 		APIBaseURL:     server.URL,
-		Model:          "gemini-3.7-flash",
+		Model:          "gemini-3.6-flash",
 		FallbackModels: nil, // default rotation from pool
 		MaxAttempts:    1,
 		RetryDelay:     func(int) time.Duration { return 0 },
@@ -1067,9 +1094,7 @@ func TestGeminiAgentDefaultModelPoolRotation(t *testing.T) {
 	}
 
 	want := []string{
-		"gemini-3.7-flash",
 		"gemini-3.6-flash",
-		"gemini-3.5-flash",
 		"gemini-3.5-flash-lite",
 		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
@@ -1129,9 +1154,7 @@ func TestGeminiAgentDefaultModelPoolRotation_FromFirstModel(t *testing.T) {
 	want := []string{
 		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
-		"gemini-3.7-flash",
 		"gemini-3.6-flash",
-		"gemini-3.5-flash",
 		"gemini-3.5-flash-lite",
 	}
 	mu.Lock()
@@ -1156,13 +1179,13 @@ func TestGeminiAgentDefaultModelPoolRotation_FromLastModel(t *testing.T) {
 		models = append(models, model)
 		mu.Unlock()
 
-		if model != "gemini-3.5-flash" {
+		if model != "gemini-3.6-flash" {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte(`{"error":{"code":503,"status":"UNAVAILABLE"}}`))
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ от 3.5"}]}}]}`))
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ от 3.6"}]}}]}`))
 	}))
 	defer server.Close()
 
@@ -1182,17 +1205,15 @@ func TestGeminiAgentDefaultModelPoolRotation_FromLastModel(t *testing.T) {
 		t.Fatal("message should be processed")
 	}
 
-	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ от 3.5" {
-		t.Fatalf("expected the answer from 3.5, got %q", reply)
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ от 3.6" {
+		t.Fatalf("expected the answer from 3.6, got %q", reply)
 	}
 
 	want := []string{
 		"gemini-3.5-flash-lite",
 		"gemini-4-hydrogen",
 		"gemini-3.8-flash",
-		"gemini-3.7-flash",
 		"gemini-3.6-flash",
-		"gemini-3.5-flash",
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -1603,7 +1624,7 @@ func TestGeminiAgentSearchSuccess_PublishesRecoveredStatus(t *testing.T) {
 
 	chatID := int64(100041)
 	msg := geminiTestMessage(chatID)
-	msg.Text = "кто сейчас президент?"
+	msg.Text = "поищи кто сейчас президент?"
 	if !agent.TryRespondImmediate(msg) {
 		t.Fatal("message should be processed")
 	}
@@ -1692,13 +1713,16 @@ func TestGeminiModelResolution_EdgeCases(t *testing.T) {
 	}
 
 	// defaultGeminiFallbacks rotation
-	want37 := []string{"gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-4-hydrogen", "gemini-3.8-flash"}
-	got37 := defaultGeminiFallbacks("gemini-3.7-flash")
-	if strings.Join(got37, ",") != strings.Join(want37, ",") {
-		t.Fatalf("default fallbacks for 3.7: got %v want %v", got37, want37)
+	want36 := []string{"gemini-3.5-flash-lite", "gemini-4-hydrogen", "gemini-3.8-flash"}
+	got36 := defaultGeminiFallbacks("gemini-3.6-flash")
+	if strings.Join(got36, ",") != strings.Join(want36, ",") {
+		t.Fatalf("default fallbacks for 3.6: got %v want %v", got36, want36)
 	}
 
-	// Model outside pool has no default fallbacks
+	// Deprecated/redirected models outside pool have no default fallbacks
+	if got := defaultGeminiFallbacks("gemini-3.7-flash"); got != nil {
+		t.Fatalf("removed model 3.7 should have nil fallbacks, got %v", got)
+	}
 	if got := defaultGeminiFallbacks("gemini-2.5-pro"); got != nil {
 		t.Fatalf("model outside pool should have nil fallbacks, got %v", got)
 	}
@@ -1723,11 +1747,26 @@ func TestGeminiModelResolution_EdgeCases(t *testing.T) {
 	if strings.Join(mixed, ",") != strings.Join(wantMixed, ",") {
 		t.Fatalf("expected %v, got %v", wantMixed, mixed)
 	}
+
+	// resolveGeminiSearchModel edge cases
+	if got := resolveGeminiSearchModel("", false); got != "gemini-2.5-flash-lite" {
+		t.Fatalf("empty search model should default to gemini-2.5-flash-lite, got %q", got)
+	}
+	if got := resolveGeminiSearchModel("gemini-2.5-flash-lite", true); got != "" {
+		t.Fatalf("disabled search should return empty string, got %q", got)
+	}
+	if got := resolveGeminiSearchModel("not-gemini", false); got != "" {
+		t.Fatalf("invalid search model should disable search, got %q", got)
+	}
+	if got := resolveGeminiSearchModel("models/gemini-2.5-pro-latest", false); got != "gemini-2.5-pro" {
+		t.Fatalf("expected normalized gemini-2.5-pro, got %q", got)
+	}
 }
 
-// TestGeminiAgentSkipsGoogleSearchForGemini4 verifies that gemini-4* models do
-// not send the google_search tool (which requires a paid tier on Gemini 4).
-func TestGeminiAgentSkipsGoogleSearchForGemini4(t *testing.T) {
+// TestGeminiAgentNonSearchQuestionSkipsSearchModelAndTools verifies that a
+// regular question without explicit search intent goes straight to the primary
+// model (gemini-4-hydrogen) without google_search tools.
+func TestGeminiAgentNonSearchQuestionSkipsSearchModelAndTools(t *testing.T) {
 	db := setupGeminiDB(t)
 
 	var requests atomic.Int32
@@ -1767,5 +1806,313 @@ func TestGeminiAgentSkipsGoogleSearchForGemini4(t *testing.T) {
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("expected exactly 1 request without search retry, got %d", got)
+	}
+}
+
+// TestGeminiAgentRoutesSearchToSearchModel verifies that an explicit search
+// request uses the configured search model (defaulting to gemini-2.5-flash-lite)
+// with google_search tools even when the primary model is gemini-4-hydrogen.
+func TestGeminiAgentRoutesSearchToSearchModel(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	var (
+		mu       sync.Mutex
+		models   []string
+		sawTools bool
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		models = append(models, model)
+		if strings.Contains(string(body), "google_search") {
+			sawTools = true
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"нашёл в сети"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:          db,
+		Client:      server.Client(),
+		APIKey:      "test-key",
+		APIBaseURL:  server.URL,
+		Model:       "gemini-4-hydrogen",
+		MaxAttempts: 1,
+		RetryDelay:  func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100043)
+	msg := geminiTestMessage(chatID)
+	msg.Text = "поищи курс доллара"
+	if !agent.TryRespondImmediate(msg) {
+		t.Fatal("message should be processed")
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "нашёл в сети" {
+		t.Fatalf("unexpected reply %q", reply)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(models) != 1 || models[0] != "gemini-2.5-flash-lite" {
+		t.Fatalf("expected single request to gemini-2.5-flash-lite, got %v", models)
+	}
+	if !sawTools {
+		t.Fatal("expected google_search tool to be sent to search model")
+	}
+}
+
+// TestGeminiAgentSearchFailureFallsBackToPrimaryWithoutTools verifies that when
+// the search model fails, the agent falls back to the primary model without tools.
+func TestGeminiAgentSearchFailureFallsBackToPrimaryWithoutTools(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	var (
+		mu             sync.Mutex
+		models         []string
+		primaryTools   bool
+		fallbackSystem string
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		models = append(models, model)
+		if model == "gemini-4-hydrogen" {
+			if strings.Contains(string(body), "google_search") {
+				primaryTools = true
+			}
+			var decoded struct {
+				SystemInstruction *struct {
+					Parts []struct {
+						Text string `json:"text"`
+					} `json:"parts"`
+				} `json:"system_instruction"`
+			}
+			if err := json.Unmarshal(body, &decoded); err == nil && decoded.SystemInstruction != nil && len(decoded.SystemInstruction.Parts) > 0 {
+				fallbackSystem = decoded.SystemInstruction.Parts[0].Text
+			}
+		}
+		mu.Unlock()
+
+		if model == "gemini-2.5-flash-lite" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ответ без поиска от 4"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:          db,
+		Client:      server.Client(),
+		APIKey:      "test-key",
+		APIBaseURL:  server.URL,
+		Model:       "gemini-4-hydrogen",
+		MaxAttempts: 1,
+		RetryDelay:  func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100044)
+	msg := geminiTestMessage(chatID)
+	msg.Text = "загугли последние новости"
+	if !agent.TryRespondImmediate(msg) {
+		t.Fatal("message should be processed")
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "ответ без поиска от 4" {
+		t.Fatalf("unexpected reply %q", reply)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(models, ",") != "gemini-2.5-flash-lite,gemini-4-hydrogen" {
+		t.Fatalf("expected fallback from search model to primary, got %v", models)
+	}
+	if primaryTools {
+		t.Fatal("fallback request to primary model must not include google_search tools")
+	}
+	if !strings.Contains(fallbackSystem, "поиск в интернете сейчас недоступен") {
+		t.Fatalf("expected fallback system instruction to mention search unavailability, got %q", fallbackSystem)
+	}
+}
+
+// TestGeminiAgentDisableSearchSkipsSearchModel verifies that DisableSearch=true
+// routes even explicit search prompts directly to the primary model without tools.
+func TestGeminiAgentDisableSearchSkipsSearchModel(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	var (
+		mu       sync.Mutex
+		models   []string
+		sawTools bool
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		models = append(models, model)
+		if strings.Contains(string(body), "google_search") {
+			sawTools = true
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"без поиска"}]}}]}`))
+	}))
+	defer server.Close()
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:            db,
+		Client:        server.Client(),
+		APIKey:        "test-key",
+		APIBaseURL:    server.URL,
+		Model:         "gemini-4-hydrogen",
+		DisableSearch: true,
+		MaxAttempts:   1,
+		RetryDelay:    func(int) time.Duration { return 0 },
+	})
+
+	chatID := int64(100045)
+	msg := geminiTestMessage(chatID)
+	msg.Text = "поищи курс доллара"
+	if !agent.TryRespondImmediate(msg) {
+		t.Fatal("message should be processed")
+	}
+	if reply := waitForGeminiReply(t, db, chatID); reply != "без поиска" {
+		t.Fatalf("unexpected reply %q", reply)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(models) != 1 || models[0] != "gemini-4-hydrogen" {
+		t.Fatalf("expected direct request to gemini-4-hydrogen, got %v", models)
+	}
+	if sawTools {
+		t.Fatal("disabled search must not send google_search tools")
+	}
+}
+
+// TestGeminiAgentSearchClientTimeoutFallsBackWhenCallerCtxAlive verifies that
+// an http.Client.Timeout on the search attempt falls back to the primary model
+// when the caller's context is still active, while a canceled/expired caller
+// context aborts immediately without falling back.
+func TestGeminiAgentSearchClientTimeoutFallsBackWhenCallerCtxAlive(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	var (
+		mu     sync.Mutex
+		models []string
+	)
+	client := &http.Client{
+		Timeout: 15 * time.Millisecond,
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+			mu.Lock()
+			models = append(models, model)
+			mu.Unlock()
+
+			if model == "gemini-2.5-flash-lite" {
+				<-r.Context().Done()
+				return nil, r.Context().Err()
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"ответ после таймаута поиска"}]}}]}`)),
+			}, nil
+		}),
+	}
+
+	agent := app.NewGeminiAgentWithConfig(app.GeminiAgentConfig{
+		DB:          db,
+		Client:      client,
+		APIKey:      "test-key",
+		Model:       "gemini-4-hydrogen",
+		MaxAttempts: 1,
+		RetryDelay:  func(int) time.Duration { return 0 },
+	})
+
+	reply, err := geminiAgentCallLLM(agent, context.Background(), "system", "user", "поищи новости", true)
+	if err != nil {
+		t.Fatalf("expected fallback reply after search timeout, got err: %v", err)
+	}
+	if reply != "ответ после таймаута поиска" {
+		t.Fatalf("unexpected reply %q", reply)
+	}
+	mu.Lock()
+	gotModels := append([]string(nil), models...)
+	mu.Unlock()
+	if strings.Join(gotModels, ",") != "gemini-2.5-flash-lite,gemini-4-hydrogen" {
+		t.Fatalf("expected search timeout to fall back to primary, got %v", gotModels)
+	}
+
+	// Now verify an already-canceled caller context stops without fallback.
+	mu.Lock()
+	models = nil
+	mu.Unlock()
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := geminiAgentCallLLM(agent, canceledCtx, "system", "user", "поищи новости", true); err == nil {
+		t.Fatal("expected error for canceled caller context")
+	}
+	mu.Lock()
+	canceledModels := append([]string(nil), models...)
+	mu.Unlock()
+	if len(canceledModels) != 1 || canceledModels[0] != "gemini-2.5-flash-lite" {
+		t.Fatalf("expected canceled caller ctx to skip fallback, got %v", canceledModels)
+	}
+}
+
+// TestNewGeminiAgentSearchModelEnv verifies GEMINI_SEARCH_MODEL env handling
+// (unset -> default, empty -> disabled, invalid -> disabled, custom -> used)
+// through the real app.NewGeminiAgent constructor.
+func TestNewGeminiAgentSearchModelEnv(t *testing.T) {
+	db := setupGeminiDB(t)
+
+	for _, tc := range []struct {
+		name      string
+		setEnv    bool
+		envValue  string
+		wantModel string
+	}{
+		{name: "unset defaults to 2.5-flash-lite", setEnv: false, wantModel: "gemini-2.5-flash-lite"},
+		{name: "empty disables search", setEnv: true, envValue: "   ", wantModel: "gemini-4-hydrogen"},
+		{name: "invalid disables search", setEnv: true, envValue: "not-a-gemini", wantModel: "gemini-4-hydrogen"},
+		{name: "custom search model", setEnv: true, envValue: "gemini-2.5-pro", wantModel: "gemini-2.5-pro"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setEnv {
+				t.Setenv("GEMINI_SEARCH_MODEL", tc.envValue)
+			} else {
+				// t.Setenv records any pre-existing value for cleanup before Unsetenv.
+				t.Setenv("GEMINI_SEARCH_MODEL", "")
+				_ = os.Unsetenv("GEMINI_SEARCH_MODEL")
+			}
+			t.Setenv("GEMINI_MODEL", "gemini-4-hydrogen")
+			t.Setenv("GEMINI_API_KEY", "test-key")
+
+			var gotModel string
+			origTransport := http.DefaultTransport
+			http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				gotModel = strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1beta/models/"), ":generateContent")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`)),
+				}, nil
+			})
+			t.Cleanup(func() { http.DefaultTransport = origTransport })
+
+			agent := app.NewGeminiAgent(db, nil)
+			if _, err := geminiAgentCallLLM(agent, context.Background(), "sys", "usr", "поищи", true); err != nil {
+				t.Fatalf("callLLM error: %v", err)
+			}
+			if gotModel != tc.wantModel {
+				t.Fatalf("expected model %q, got %q", tc.wantModel, gotModel)
+			}
+		})
 	}
 }
