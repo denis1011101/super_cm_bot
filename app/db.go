@@ -233,6 +233,7 @@ func GetGigaLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	err := db.QueryRow("SELECT MAX(handsome_last_update_at) FROM pens WHERE tg_chat_id = ?", chatID).Scan(&lastUpdateText)
 	if err != nil {
 		log.Printf("Error querying last update time: %v", err)
+		return time.Time{}, err
 	} else {
 		log.Printf("Last update time retrieved successfully")
 	}
@@ -255,6 +256,7 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	err := db.QueryRow("SELECT MAX(unhandsome_last_update_at) FROM pens WHERE tg_chat_id = ?", chatID).Scan(&lastUpdateText)
 	if err != nil {
 		log.Printf("Error querying last update time: %v", err)
+		return time.Time{}, err
 	} else {
 		log.Printf("Last update time retrieved successfully")
 	}
@@ -569,6 +571,20 @@ func SaveGeminiMemory(db *sql.DB, chatID, userID int64, role, content string, cr
 		"INSERT INTO gemini_memories (chat_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
 		chatID, userID, role, content, createdAt.UTC().Format(sqliteTimestampLayout),
 	)
+	return err
+}
+
+// saveGeminiBotMessage also records the message ID so reactions can be attributed to the bot.
+// A blank content value records ownership only, for replies that bypass memory.
+func saveGeminiBotMessage(db *sql.DB, chatID int64, messageID int, content string, createdAt time.Time) error {
+	if messageID <= 0 {
+		return SaveGeminiMemory(db, chatID, 0, "bot", content, createdAt)
+	}
+	_, err := db.Exec(`
+		INSERT INTO gemini_memories (chat_id, user_id, role, content, created_at, telegram_message_id)
+		VALUES (?, 0, 'bot', ?, ?, ?)
+		ON CONFLICT DO NOTHING`,
+		chatID, strings.TrimSpace(content), createdAt.UTC().Format(sqliteTimestampLayout), messageID)
 	return err
 }
 
@@ -1027,13 +1043,18 @@ func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Tim
 		return "", nil
 	}
 
+	const maxReactionQuoteChars = 160
+	cutoff := since.UTC().Format(sqliteTimestampLayout)
 	rows, err := db.Query(
-		`SELECT role, content
-		FROM gemini_memories
-		WHERE chat_id = ? AND created_at >= ?
-		ORDER BY created_at DESC, id DESC
+		`SELECT memory.role, memory.content, COALESCE(SUBSTR(target.content, 1, ?), '')
+		FROM gemini_memories memory
+		LEFT JOIN gemini_memories target ON memory.telegram_update_id IS NOT NULL
+			AND target.chat_id = memory.chat_id AND target.telegram_message_id = memory.telegram_message_id
+			AND target.role = 'bot' AND target.user_id = 0 AND target.telegram_update_id IS NULL AND target.created_at >= ?
+		WHERE memory.chat_id = ? AND memory.created_at >= ? AND memory.content <> ''
+		ORDER BY memory.created_at DESC, memory.id DESC
 		LIMIT ?`,
-		chatID, since.UTC().Format(sqliteTimestampLayout), limit,
+		maxReactionQuoteChars, cutoff, chatID, cutoff, limit,
 	)
 	if err != nil {
 		return "", err
@@ -1047,12 +1068,13 @@ func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Tim
 	type memoryRow struct {
 		role    string
 		content string
+		quote   string
 	}
 
 	memories := make([]memoryRow, 0, limit)
 	for rows.Next() {
 		var row memoryRow
-		if err := rows.Scan(&row.role, &row.content); err != nil {
+		if err := rows.Scan(&row.role, &row.content, &row.quote); err != nil {
 			return "", err
 		}
 		memories = append(memories, row)
@@ -1072,6 +1094,11 @@ func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Tim
 		b.WriteString(memories[i].role)
 		b.WriteString(": ")
 		b.WriteString(memories[i].content)
+		if quote := strings.Join(strings.Fields(memories[i].quote), " "); quote != "" {
+			b.WriteString(" «")
+			b.WriteString(quote)
+			b.WriteString("»")
+		}
 	}
 	return b.String(), nil
 }

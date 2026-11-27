@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"math/rand"
@@ -100,11 +101,6 @@ func main() {
 	// Пример логирования
 	log.Println("This is a log message")
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-
-	updates := bot.GetUpdatesChan(u)
-
 	if runtimeConfig.ResetDB() {
 		if err := app.ResetDatabaseFiles("./data"); err != nil {
 			log.Fatalf("Failed to reset development database: %v", err)
@@ -154,8 +150,8 @@ func main() {
 	// Запуск еженедельного архивирования неактивных пользователей
 	app.StartArchiveRoutine(db)
 
-	// Запуск ежедневных команд в случайное время
-	app.StartDailyCommandsRoutine(db, bot, specificChatID, handlers.ChooseGiga, handlers.ChooseUnhandsome)
+	selectionScheduler := handlers.NewSelectionScheduler(specificChatID)
+	go selectionScheduler.Run(context.Background(), bot, db)
 
 	// Ночная очистка памяти Gemini
 	app.StartGeminiMemoryCleanupRoutine(db, nil)
@@ -164,26 +160,17 @@ func main() {
 	geminiAgent.SetSpinCooldown(runtimeConfig.SpinCooldown())
 	startAgentBus(geminiAgent, bot.Self.UserName)
 	geminiAgent.SetAutoCommandHandler(func(source tgbotapi.Message, cmd string) {
-		synthetic := source
-		synthetic.Text = cmd
-		update := tgbotapi.Update{Message: &synthetic}
-
-		switch cmd {
-		case "/giga":
-			handlers.ChooseGiga(update, bot, db)
-		case "/unh":
-			handlers.ChooseUnhandsome(update, bot, db)
-		}
+		selectionScheduler.TryAutomatic(source, cmd, bot, db)
 	})
 
 	// Обработчики команд
 	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
 		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,
 		"/pen":                                handlers.HandleSpin,
-		"/giga@super_cum_lovers_bot":          handlers.ChooseGiga,
-		"/giga":                               handlers.ChooseGiga,
-		"/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
-		"/unh":                                handlers.ChooseUnhandsome,
+		"/giga@super_cum_lovers_bot":          selectionScheduler.ChooseGiga,
+		"/giga":                               selectionScheduler.ChooseGiga,
+		"/unhandsome@super_cum_lovers_bot":    selectionScheduler.ChooseUnhandsome,
+		"/unh":                                selectionScheduler.ChooseUnhandsome,
 		"/toppens":                            handlers.TopLength,
 		"/toppens@super_cum_lovers_bot":       handlers.TopLength,
 		"/toplength@super_cum_lovers_bot":     handlers.TopLength,
@@ -201,7 +188,14 @@ func main() {
 	}
 
 	// Обработка обновлений
-	for update := range updates {
+	for event := range app.PollTelegramUpdates(context.Background(), bot) {
+		if event.MessageReaction != nil || event.MessageReactionCount != nil {
+			if err := app.RecordTelegramReaction(db, specificChatID, event); err != nil {
+				log.Printf("Record Telegram reaction: %v", err)
+			}
+			continue
+		}
+		update := event.Update
 		if update.MyChatMember != nil { // Обработка добавления бота в чат
 			handlers.HandleBotAddition(update, bot)
 			continue

@@ -535,31 +535,27 @@ func (a *GeminiAgent) respond(m tgbotapi.Message) error {
 	}
 
 	if a.bot == nil {
-		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, factsToSave, a.now())
+		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, 0, factsToSave, a.now())
 		return nil
 	}
 
 	msg := tgbotapi.NewMessage(m.Chat.ID, reply)
 	msg.ReplyToMessageID = m.MessageID
-	_, sendErr := a.bot.Send(msg)
+	sent, sendErr := a.bot.Send(msg)
 	if sendErr == nil {
-		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, factsToSave, a.now())
+		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, sent.MessageID, factsToSave, a.now())
 		a.maybeRunAutoCommand(m, autoCommand)
 	}
 	return sendErr
 }
 
-func saveMemoryPair(db *sql.DB, chatID, userID int64, userRole, userText, reply string, now time.Time) {
-	if err := SaveGeminiMemory(db, chatID, userID, normalizeMemoryRole(userRole, "user"), userText, now); err != nil {
+func saveGeminiArtifacts(db *sql.DB, chatID int64, author *tgbotapi.User, userRole, userText, reply string, replyMessageID int, facts []GeminiUserFact, now time.Time) {
+	if err := SaveGeminiMemory(db, chatID, tgUserID(author), normalizeMemoryRole(userRole, "user"), userText, now); err != nil {
 		log.Printf("GeminiAgent.respond: save user memory error: %v", err)
 	}
-	if err := SaveGeminiMemory(db, chatID, 0, "bot", reply, now); err != nil {
+	if err := saveGeminiBotMessage(db, chatID, replyMessageID, reply, now); err != nil {
 		log.Printf("GeminiAgent.respond: save assistant memory error: %v", err)
 	}
-}
-
-func saveGeminiArtifacts(db *sql.DB, chatID int64, author *tgbotapi.User, userRole, userText, reply string, facts []GeminiUserFact, now time.Time) {
-	saveMemoryPair(db, chatID, tgUserID(author), userRole, userText, reply, now)
 	for _, fact := range facts {
 		userID := ResolveGeminiFactUserID(db, chatID, fact.UserName, author)
 		if err := SaveGeminiUserFact(db, chatID, userID, fact.UserName, fact.Fact, now); err != nil {

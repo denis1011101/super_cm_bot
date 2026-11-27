@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
@@ -12,6 +13,70 @@ import (
 )
 
 var runtimeConfig config.Config
+
+// Guards the cooldown check, selection, and scheduler state transition.
+var selectionMu sync.Mutex
+
+type selectionCommand struct {
+	name       string
+	lastUpdate func(*sql.DB, int64) (time.Time, error)
+	choose     func(*sql.DB, int64) (message string, completed bool)
+}
+
+func (c *selectionCommand) runManual(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, scheduler *SelectionScheduler) {
+	selectionMu.Lock()
+	defer selectionMu.Unlock()
+
+	completed, _ := c.run(update.Message, bot, db, false)
+	if completed && scheduler != nil && update.Message.Chat.ID == scheduler.chatID && c == scheduler.next {
+		scheduler.advance(time.Now())
+		scheduler.wake()
+	}
+}
+
+// run requires selectionMu to be held.
+func (c *selectionCommand) run(message *tgbotapi.Message, bot *tgbotapi.BotAPI, db *sql.DB, automatic bool) (completed bool, retryAt time.Time) {
+	update := tgbotapi.Update{Message: message}
+	if !automatic && !ensureSelectionCaller(update, bot, db) {
+		return false, time.Time{}
+	}
+
+	chatID := message.Chat.ID
+	lastUpdate, err := c.lastUpdate(db, chatID)
+	if err != nil {
+		return false, time.Time{}
+	}
+	if checkIsSpinNotLegal(lastUpdate) {
+		if automatic {
+			return false, lastUpdate.Add(runtimeConfig.SpinCooldown())
+		}
+		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, message.MessageID)
+		return false, time.Time{}
+	}
+
+	if automatic && message.From != nil && !ensureSelectionCaller(update, bot, db) {
+		return false, time.Time{}
+	}
+	reply, completed := c.choose(db, chatID)
+	if reply != "" && (completed || !automatic) {
+		app.SendMessage(chatID, reply, bot, message.MessageID)
+	}
+	return completed, time.Time{}
+}
+
+func ensureSelectionCaller(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) bool {
+	userID := update.Message.From.ID
+	exists, err := app.UserExists(db, userID, update.Message.Chat.ID)
+	if err != nil {
+		log.Printf("Error checking if user exists: %v", err)
+		return false
+	}
+	if !exists {
+		log.Printf("User not found in database, registering: %v", userID)
+		registerBot(update, bot, db, true)
+	}
+	return true
+}
 
 // SetRuntimeConfig applies the validated configuration during application startup.
 func SetRuntimeConfig(cfg config.Config) {

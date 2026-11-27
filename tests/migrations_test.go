@@ -42,8 +42,8 @@ func TestRunMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to count migrations: %v", err)
 	}
-	if count != 7 {
-		t.Fatalf("Expected 7 migrations to be applied, but count is %d", count)
+	if count != 8 {
+		t.Fatalf("Expected 8 migrations to be applied, but count is %d", count)
 	}
 
 	// Проверяем, что колонка is_active добавлена в таблицу pens
