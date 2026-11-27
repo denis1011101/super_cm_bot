@@ -7,7 +7,8 @@ import (
 	"strings"
 
 	"github.com/denis1011101/super_cm_bot/app"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 type topConfig struct {
@@ -17,8 +18,8 @@ type topConfig struct {
 	formatRow func(index int, name string, value int) string
 }
 
-func handleTop(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, cfg topConfig) {
-	if update.Message == nil || update.Message.Chat == nil {
+func handleTop(update models.Update, bot *telegram.Bot, db *sql.DB, cfg topConfig) {
+	if update.Message == nil || update.Message.Chat.ID == 0 {
 		return
 	}
 	chatID := update.Message.Chat.ID
@@ -54,7 +55,7 @@ func handleTop(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, cfg top
 		return
 	}
 
-	app.SendMessage(chatID, sb.String(), bot, update.Message.MessageID)
+	app.SendMessage(chatID, sb.String(), bot, update.Message.ID)
 }
 
 var (
@@ -74,7 +75,7 @@ var (
 )
 
 // TopLength обрабатывает команду "топ длина"
-func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func TopLength(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	handleTop(update, bot, db, topConfig{
 		query: `
 			SELECT pen_length, pen_name
@@ -98,7 +99,7 @@ func TopLength(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 }
 
 // TopGiga обрабатывает команду "топ гигачад"
-func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func TopGiga(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	handleTop(update, bot, db, topConfig{
 		query: `
 			SELECT handsome_count, pen_name 
@@ -120,7 +121,7 @@ func TopGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 }
 
 // TopUnhandsome обрабатывает команду "топ пидор"
-func TopUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func TopUnhandsome(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	handleTop(update, bot, db, topConfig{
 		query: `
 			SELECT unhandsome_count, pen_name 

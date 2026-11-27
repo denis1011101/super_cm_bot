@@ -8,10 +8,11 @@ import (
 	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
-func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func HandleSpin(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
 
@@ -40,7 +41,7 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	// Проверка времени последнего обновления
 	shouldReturn := checkIsSpinNotLegal(pen.LastUpdateTime)
 	if shouldReturn {
-		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.MessageID)
+		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, update.Message.ID)
 		return
 	}
 
@@ -115,5 +116,5 @@ func HandleSpin(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
 	}
 
 	log.Printf("Response text: %s", responseText)
-	app.SendMessage(chatID, responseText, bot, update.Message.MessageID)
+	app.SendMessage(chatID, responseText, bot, update.Message.ID)
 }

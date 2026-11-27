@@ -13,42 +13,55 @@ import (
 	"time"
 
 	"github.com/denis1011101/super_cm_bot/app"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 func TestPollTelegramUpdatesSubscribesToReactions(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	forms := make(chan *http.Request, 2)
-	bot, err := tgbotapi.NewBotAPIWithClient("fake-token", "https://telegram.test/bot%s/%s", &http.Client{
+	client := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			body := `{"ok":true,"result":{"id":123456,"is_bot":true,"first_name":"TestBot"}}`
 			if strings.HasSuffix(r.URL.Path, "/getUpdates") {
-				if err := r.ParseForm(); err != nil {
+				if err := r.ParseMultipartForm(1 << 20); err != nil {
 					return nil, err
 				}
 				forms <- r
-				if r.Form.Get("offset") != "" {
-					<-ctx.Done()
-					return nil, ctx.Err()
+				if r.Form.Get("offset") != "1" {
+					<-r.Context().Done()
+					return nil, r.Context().Err()
 				}
 				body = `{"ok":true,"result":[
 					{"update_id":41,"message":{"message_id":5,"text":"hello"}},
-					{"update_id":42,"my_chat_member":{"chat":{"id":-1}}},
+					{"update_id":42,"my_chat_member":{"chat":{"id":-1},
+						"old_chat_member":{"status":"left","user":{"id":123456}},
+						"new_chat_member":{"status":"member","user":{"id":123456}}}},
 					{"update_id":43,"message_reaction":{"chat":{"id":-1},"message_id":6}},
 					{"update_id":44,"message_reaction_count":{"chat":{"id":-1},"message_id":6}}
 				]}`
 			}
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 		}),
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 
-	updates := app.PollTelegramUpdates(ctx, bot)
+	updates := make(chan *models.Update, 4)
+	options := append(app.TelegramPollingOptions(), telegram.WithDefaultHandler(func(_ context.Context, _ *telegram.Bot, update *models.Update) {
+		updates <- update
+	}))
+	bot := newMockTelegramBot(t, client, options...)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		bot.Start(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
 	deadline := time.After(3 * time.Second)
-	var batch []app.TelegramUpdate
+	var batch []*models.Update
 	for len(batch) < 4 {
 		select {
 		case update := <-updates:
@@ -76,9 +89,9 @@ func TestPollTelegramUpdatesSubscribesToReactions(t *testing.T) {
 	}
 }
 
-func namedReaction(t *testing.T, updateID int, chatID int64, messageID int, old, new string) app.TelegramUpdate {
+func namedReaction(t *testing.T, updateID int, chatID int64, messageID int, old, new string) models.Update {
 	t.Helper()
-	var update app.TelegramUpdate
+	var update models.Update
 	err := json.Unmarshal(fmt.Appendf(nil, `{"update_id":%d,"message_reaction":{
 		"chat":{"id":%d},"message_id":%d,"date":%d,"user":{"id":42,"first_name":"Маша"},
 		"old_reaction":%s,"new_reaction":%s}}`, updateID, chatID, messageID, time.Now().Unix(), old, new), &update)
@@ -98,7 +111,7 @@ func TestTelegramReactionMemory(t *testing.T) {
 	const fire = `[{"type":"emoji","emoji":"🔥"}]`
 	const custom = `[{"type":"custom_emoji","custom_emoji_id":"123"}]`
 	added := namedReaction(t, 100, chatID, 1, `[]`, fire)
-	for _, update := range []app.TelegramUpdate{
+	for _, update := range []models.Update{
 		added,
 		added,
 		namedReaction(t, 101, chatID, 1, fire, custom),
@@ -122,7 +135,7 @@ func TestTelegramReactionMemory(t *testing.T) {
 	if memory != want {
 		t.Fatalf("reaction memory:\n%s\nwant:\n%s", memory, want)
 	}
-	if _, err := deleteMyFacts(db, chatID, &tgbotapi.User{ID: 42, FirstName: "Маша"}); err != nil {
+	if _, err := deleteMyFacts(db, chatID, &models.User{ID: 42, FirstName: "Маша"}); err != nil {
 		t.Fatal(err)
 	}
 	if memory, err = app.LoadGeminiMemoryContext(db, chatID, 20, time.Now().Add(-time.Hour)); err != nil || memory != "bot: Реплика бота" {
@@ -137,7 +150,7 @@ func TestTelegramAnonymousReactionWithoutMessageText(t *testing.T) {
 	t.Cleanup(func() { app.EnableOutgoingMemory(nil) })
 	app.SendMessageWithoutMemory(chatID, "приватный ответ /myfacts", mockSendBot(t, true), 0)
 
-	var update app.TelegramUpdate
+	var update models.Update
 	if err := json.Unmarshal(fmt.Appendf(nil, `{"update_id":200,"message_reaction_count":{
 		"chat":{"id":%d},"message_id":1,"date":%d,
 		"reactions":[{"type":{"type":"emoji","emoji":"👍"},"total_count":3}]}}`, chatID, time.Now().Unix()), &update); err != nil {

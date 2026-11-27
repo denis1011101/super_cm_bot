@@ -11,7 +11,8 @@ import (
 
 	"github.com/denis1011101/super_cm_bot/app"
 	messagegenerators "github.com/denis1011101/super_cm_bot/app/handlers/message_generators"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 // mass среднестатистического европейского в граммах 130..140 грамм
@@ -71,7 +72,7 @@ func normalizeGigaAddSize(addSize int) int {
 
 var gigaSelection = selectionCommand{name: "/giga", lastUpdate: app.GetGigaLastUpdateTime, choose: chooseGiga}
 
-func ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func ChooseGiga(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	gigaSelection.runManual(update, bot, db, nil)
 }
 

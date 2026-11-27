@@ -7,7 +7,8 @@ import (
 
 	"github.com/denis1011101/super_cm_bot/app"
 	messagegenerators "github.com/denis1011101/super_cm_bot/app/handlers/message_generators"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 func normalizeUnhandsomeDiffSize(diffSize int) int {
@@ -16,7 +17,7 @@ func normalizeUnhandsomeDiffSize(diffSize int) int {
 
 var unhSelection = selectionCommand{name: "/unh", lastUpdate: app.GetUnhandsomeLastUpdateTime, choose: chooseUnhandsome}
 
-func ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func ChooseUnhandsome(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	unhSelection.runManual(update, bot, db, nil)
 }
 

@@ -7,7 +7,8 @@ import (
 	"math/rand/v2"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 const (
@@ -36,20 +37,20 @@ func NewSelectionScheduler(chatID int64) *SelectionScheduler {
 	return scheduler
 }
 
-func (s *SelectionScheduler) ChooseGiga(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func (s *SelectionScheduler) ChooseGiga(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	gigaSelection.runManual(update, bot, db, s)
 }
 
-func (s *SelectionScheduler) ChooseUnhandsome(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func (s *SelectionScheduler) ChooseUnhandsome(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	unhSelection.runManual(update, bot, db, s)
 }
 
 // TryAutomatic takes a Gemini suggestion when its turn is ready.
-func (s *SelectionScheduler) TryAutomatic(message tgbotapi.Message, command string, bot *tgbotapi.BotAPI, db *sql.DB) {
+func (s *SelectionScheduler) TryAutomatic(message models.Message, command string, bot *telegram.Bot, db *sql.DB) {
 	selectionMu.Lock()
 	defer selectionMu.Unlock()
 
-	if message.Chat == nil || message.Chat.ID != s.chatID || command != s.next.name || time.Now().Before(s.readyAt) {
+	if message.Chat.ID == 0 || message.Chat.ID != s.chatID || command != s.next.name || time.Now().Before(s.readyAt) {
 		return
 	}
 	s.runAutomatic(&message, bot, db)
@@ -57,7 +58,7 @@ func (s *SelectionScheduler) TryAutomatic(message tgbotapi.Message, command stri
 }
 
 // Run waits for the timer or for a manual or Gemini selection to move it.
-func (s *SelectionScheduler) Run(ctx context.Context, bot *tgbotapi.BotAPI, db *sql.DB) {
+func (s *SelectionScheduler) Run(ctx context.Context, bot *telegram.Bot, db *sql.DB) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -75,17 +76,17 @@ func (s *SelectionScheduler) Run(ctx context.Context, bot *tgbotapi.BotAPI, db *
 	}
 }
 
-func (s *SelectionScheduler) runScheduled(bot *tgbotapi.BotAPI, db *sql.DB) {
+func (s *SelectionScheduler) runScheduled(bot *telegram.Bot, db *sql.DB) {
 	selectionMu.Lock()
 	defer selectionMu.Unlock()
 
 	if time.Now().Before(s.timerAt) {
 		return
 	}
-	s.runAutomatic(&tgbotapi.Message{Chat: &tgbotapi.Chat{ID: s.chatID}}, bot, db)
+	s.runAutomatic(&models.Message{Chat: models.Chat{ID: s.chatID}}, bot, db)
 }
 
-func (s *SelectionScheduler) runAutomatic(message *tgbotapi.Message, bot *tgbotapi.BotAPI, db *sql.DB) {
+func (s *SelectionScheduler) runAutomatic(message *models.Message, bot *telegram.Bot, db *sql.DB) {
 	completed, retryAt := s.next.run(message, bot, db, true)
 	if completed {
 		s.advance(time.Now())

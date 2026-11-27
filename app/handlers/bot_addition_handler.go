@@ -4,17 +4,21 @@ import (
 	"log"
 
 	"github.com/denis1011101/super_cm_bot/app"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
-func HandleBotAddition(update tgbotapi.Update, bot *tgbotapi.BotAPI) {
-	if update.MyChatMember != nil && bot != nil && update.MyChatMember.NewChatMember.User.UserName == bot.Self.UserName {
-		if update.MyChatMember.Chat.IsGroup() || update.MyChatMember.Chat.IsSuperGroup() {
-			log.Printf("Bot added to group: %s", update.MyChatMember.Chat.Title)
-			app.SendMessage(update.MyChatMember.Chat.ID, "Здарова! Я ваш новый папочка 😈 Жмякай на кнопку, если не ссылко: /pen", bot, 0)
-		} else if update.MyChatMember.Chat.IsPrivate() {
-			log.Printf("Bot added to private chat with: %s", update.MyChatMember.From.UserName)
-			app.SendMessage(update.MyChatMember.Chat.ID, "Этот бот работает только в группах.", bot, 0)
+func HandleBotAddition(update models.Update, bot *telegram.Bot) {
+	if memberUpdate := update.MyChatMember; memberUpdate != nil && bot != nil {
+		if user := app.TelegramMemberUser(memberUpdate.NewChatMember); user != nil && user.ID == bot.ID() {
+			switch memberUpdate.Chat.Type {
+			case models.ChatTypeGroup, models.ChatTypeSupergroup:
+				log.Printf("Bot added to group: %s", memberUpdate.Chat.Title)
+				app.SendMessage(memberUpdate.Chat.ID, "Здарова! Я ваш новый папочка 😈 Жмякай на кнопку, если не ссылко: /pen", bot, 0)
+			case models.ChatTypePrivate:
+				log.Printf("Bot added to private chat with: %s", memberUpdate.From.Username)
+				app.SendMessage(memberUpdate.Chat.ID, "Этот бот работает только в группах.", bot, 0)
+			}
 		}
 	}
 

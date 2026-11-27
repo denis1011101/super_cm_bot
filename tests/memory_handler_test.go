@@ -10,14 +10,14 @@ import (
 
 	"github.com/denis1011101/super_cm_bot/app"
 	_ "github.com/denis1011101/super_cm_bot/app/handlers"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 )
 
 //go:linkname buildMyFactsMessage github.com/denis1011101/super_cm_bot/app/handlers.buildMyFactsMessage
-func buildMyFactsMessage(db *sql.DB, chatID int64, user *tgbotapi.User) (string, error)
+func buildMyFactsMessage(db *sql.DB, chatID int64, user *models.User) (string, error)
 
 //go:linkname deleteMyFacts github.com/denis1011101/super_cm_bot/app/handlers.deleteMyFacts
-func deleteMyFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error)
+func deleteMyFacts(db *sql.DB, chatID int64, user *models.User) (int64, error)
 
 func TestLoadGeminiUserFactsForUser(t *testing.T) {
 	db := setupGeminiDB(t)
@@ -148,7 +148,7 @@ func TestSaveGeminiUserFactKeepsThirtyNewestPerOwner(t *testing.T) {
 func TestDeleteMyFactsOnlyDeletesCurrentUserAndChat(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(446)
-	user := &tgbotapi.User{ID: 1, FirstName: "Денис", LastName: "Иванов", UserName: "denis1011101"}
+	user := &models.User{ID: 1, FirstName: "Денис", LastName: "Иванов", Username: "denis1011101"}
 	now := time.Now()
 
 	testFacts := []struct {
@@ -189,7 +189,7 @@ func TestDeleteMyFactsOnlyDeletesCurrentUserAndChat(t *testing.T) {
 func TestBuildMyFactsMessage(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(555)
-	user := &tgbotapi.User{ID: 1, FirstName: "Денис", LastName: "Иванов", UserName: "denis1011101"}
+	user := &models.User{ID: 1, FirstName: "Денис", LastName: "Иванов", Username: "denis1011101"}
 
 	testFacts := []struct {
 		userID   int64
@@ -222,7 +222,7 @@ func TestBuildMyFactsMessage(t *testing.T) {
 func TestBuildMyFactsMessageWhenEmpty(t *testing.T) {
 	db := setupGeminiDB(t)
 
-	message, err := buildMyFactsMessage(db, 666, &tgbotapi.User{ID: 9, FirstName: "Никто"})
+	message, err := buildMyFactsMessage(db, 666, &models.User{ID: 9, FirstName: "Никто"})
 	if err != nil {
 		t.Fatalf("build empty message: %v", err)
 	}
@@ -234,8 +234,8 @@ func TestBuildMyFactsMessageWhenEmpty(t *testing.T) {
 func TestResolveGeminiFactUserID(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(777)
-	author := &tgbotapi.User{ID: 1, FirstName: "Денис", LastName: "Иванов", UserName: "denis1011101"}
-	dmitri := &tgbotapi.User{ID: 2, FirstName: "Дмитрий", UserName: "dima_t"}
+	author := &models.User{ID: 1, FirstName: "Денис", LastName: "Иванов", Username: "denis1011101"}
+	dmitri := &models.User{ID: 2, FirstName: "Дмитрий", Username: "dima_t"}
 
 	app.RememberChatMember(db, chatID, author)
 	app.RememberChatMember(db, chatID, dmitri)
@@ -264,10 +264,10 @@ func TestResolveGeminiFactUserID(t *testing.T) {
 func TestResolveGeminiFactUserIDLeavesNamesakesUnresolved(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(778)
-	author := &tgbotapi.User{ID: 5, FirstName: "Юрий", UserName: "yrcnbt"}
+	author := &models.User{ID: 5, FirstName: "Юрий", Username: "yrcnbt"}
 
-	app.RememberChatMember(db, chatID, &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"})
-	app.RememberChatMember(db, chatID, &tgbotapi.User{ID: 2, FirstName: "Denis", UserName: "denis_two"})
+	app.RememberChatMember(db, chatID, &models.User{ID: 1, FirstName: "Денис", Username: "denis1011101"})
+	app.RememberChatMember(db, chatID, &models.User{ID: 2, FirstName: "Denis", Username: "denis_two"})
 	app.RememberChatMember(db, chatID, author)
 
 	if got := app.ResolveGeminiFactUserID(db, chatID, "Денис", author); got != 0 {
@@ -281,7 +281,7 @@ func TestResolveGeminiFactUserIDLeavesNamesakesUnresolved(t *testing.T) {
 func TestClaimOwnerlessFactsOnMyFacts(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(779)
-	user := &tgbotapi.User{ID: 1, FirstName: "Denis", UserName: "denis1011101"}
+	user := &models.User{ID: 1, FirstName: "Denis", Username: "denis1011101"}
 	app.RememberChatMember(db, chatID, user)
 
 	for i, userName := range []string{"Denis", "Денис", "Дима"} {
@@ -316,9 +316,9 @@ func TestClaimOwnerlessFactsOnMyFacts(t *testing.T) {
 func TestClaimOwnerlessFactsSkipsNamesakes(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(780)
-	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+	user := &models.User{ID: 1, FirstName: "Денис", Username: "denis1011101"}
 	app.RememberChatMember(db, chatID, user)
-	app.RememberChatMember(db, chatID, &tgbotapi.User{ID: 2, FirstName: "Denis", UserName: "denis_two"})
+	app.RememberChatMember(db, chatID, &models.User{ID: 2, FirstName: "Denis", Username: "denis_two"})
 
 	if err := app.SaveGeminiUserFact(db, chatID, 0, "Денис", "чей-то факт", time.Now()); err != nil {
 		t.Fatalf("save legacy fact: %v", err)
@@ -344,7 +344,7 @@ func TestClaimOwnerlessFactsSkipsNamesakes(t *testing.T) {
 func TestBuildMyFactsMessageMentionsSampling(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(781)
-	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+	user := &models.User{ID: 1, FirstName: "Денис", Username: "denis1011101"}
 
 	for i := 0; i < 7; i++ {
 		if err := app.SaveGeminiUserFact(db, chatID, user.ID, "Денис", fmt.Sprintf("факт-%d", i), time.Now()); err != nil {
@@ -367,7 +367,7 @@ func TestBuildMyFactsMessageMentionsSampling(t *testing.T) {
 func TestBuildMyFactsMessageWithoutSampling(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(782)
-	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+	user := &models.User{ID: 1, FirstName: "Денис", Username: "denis1011101"}
 
 	for i := 0; i < 2; i++ {
 		if err := app.SaveGeminiUserFact(db, chatID, user.ID, "Денис", fmt.Sprintf("факт-%d", i), time.Now()); err != nil {
@@ -390,7 +390,7 @@ func TestBuildMyFactsMessageWithoutSampling(t *testing.T) {
 func TestForgetGeminiUserClearsFactsAndOwnLines(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(447)
-	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+	user := &models.User{ID: 1, FirstName: "Денис", Username: "denis1011101"}
 	now := time.Now()
 
 	if err := app.SaveGeminiUserFact(db, chatID, user.ID, "Денис", "не спит сутки", now); err != nil {
@@ -461,7 +461,7 @@ func TestForgetGeminiUserClearsFactsAndOwnLines(t *testing.T) {
 func TestForgetGeminiUserRollsBackOnFailure(t *testing.T) {
 	db := setupGeminiDB(t)
 	chatID := int64(448)
-	user := &tgbotapi.User{ID: 1, FirstName: "Денис", UserName: "denis1011101"}
+	user := &models.User{ID: 1, FirstName: "Денис", Username: "denis1011101"}
 	now := time.Now()
 
 	if err := app.SaveGeminiUserFact(db, chatID, user.ID, "Денис", "не спит сутки", now); err != nil {

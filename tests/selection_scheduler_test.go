@@ -14,13 +14,14 @@ import (
 
 	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/app/handlers"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 type selectionTestChat struct {
 	db        *sql.DB
-	bot       *tgbotapi.BotAPI
-	update    tgbotapi.Update
+	bot       *telegram.Bot
+	update    models.Update
 	repliesMu sync.Mutex
 	replies   []string
 }
@@ -30,17 +31,17 @@ func newSelectionTestChat(t *testing.T) *selectionTestChat {
 	const chatID = -123
 	chat := &selectionTestChat{
 		db: setupBotDB(t),
-		update: tgbotapi.Update{Message: &tgbotapi.Message{
-			From: &tgbotapi.User{ID: 1}, Chat: &tgbotapi.Chat{ID: chatID},
+		update: models.Update{Message: &models.Message{
+			From: &models.User{ID: 1}, Chat: models.Chat{ID: chatID},
 		}},
 	}
 	insertPen(t, chat.db, 1, chatID, nil)
 	insertPen(t, chat.db, 2, chatID, nil)
 
-	bot, err := tgbotapi.NewBotAPIWithClient("test-token", "https://telegram.test/bot%s/%s", &http.Client{
+	chat.bot = newMockTelegramBot(t, &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			if strings.HasSuffix(r.URL.Path, "/sendMessage") {
-				if err := r.ParseForm(); err != nil {
+				if err := r.ParseMultipartForm(1 << 20); err != nil {
 					return nil, err
 				}
 				chat.repliesMu.Lock()
@@ -50,10 +51,6 @@ func newSelectionTestChat(t *testing.T) *selectionTestChat {
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ok":true,"result":{}}`))}, nil
 		}),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	chat.bot = bot
 	return chat
 }
 

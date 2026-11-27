@@ -1,12 +1,14 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 // Свои сообщения бот никогда не обрабатывает как входящие — Telegram их и не
@@ -37,7 +39,7 @@ func recordOutgoingMemory(chatID int64, messageID int, text string) {
 }
 
 // SendMessage отправляет сообщение в чат или как ответ на конкретное сообщение
-func SendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) {
+func SendMessage(chatID int64, text string, bot *telegram.Bot, replyToMessageID int) {
 	if messageID, err := sendMessage(chatID, text, bot, replyToMessageID); err == nil {
 		recordOutgoingMemory(chatID, messageID, text)
 	}
@@ -46,25 +48,25 @@ func SendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessage
 // SendMessageWithoutMemory отправляет сообщение, не сохраняя его в память Gemini.
 // Нужно там, где текст пересказывает данные, которые пользователь вправе стереть:
 // иначе /forgetme удалит факты, а их копия останется висеть в контексте.
-func SendMessageWithoutMemory(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) {
+func SendMessageWithoutMemory(chatID int64, text string, bot *telegram.Bot, replyToMessageID int) {
 	if messageID, err := sendMessage(chatID, text, bot, replyToMessageID); err == nil && messageID > 0 {
 		recordOutgoingMemory(chatID, messageID, "")
 	}
 }
 
 // sendMessage returns the ID assigned by Telegram after a successful send.
-func sendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) (int, error) {
-	msg := tgbotapi.NewMessage(chatID, text)
+func sendMessage(chatID int64, text string, bot *telegram.Bot, replyToMessageID int) (int, error) {
+	params := &telegram.SendMessageParams{ChatID: chatID, Text: text}
 	if replyToMessageID != 0 {
-		msg.ReplyToMessageID = replyToMessageID
+		params.ReplyParameters = &models.ReplyParameters{MessageID: replyToMessageID}
 	}
-	sent, err := bot.Send(msg)
+	sent, err := bot.SendMessage(context.Background(), params)
 	if err != nil {
 		log.Println("Error sending message:", err)
 		return 0, err
 	}
 	log.Printf("Message sent to chat ID %d: %s", chatID, text)
-	return sent.MessageID, nil
+	return sent.ID, nil
 }
 
 // ArchiveInactiveUsers помечает пользователей как неактивных, если они не обновлялись 180 дней.
@@ -140,7 +142,7 @@ func loadPenUsersForRefresh(db *sql.DB) ([]penUserRow, error) {
 
 // RefreshUsernames пробегает всех пользователей в таблице pens и обновляет pen_name,
 // если Telegram API вернул отличный username. В случае ошибки оставляет прежний.
-func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
+func RefreshUsernames(db *sql.DB, bot *telegram.Bot) error {
 	// Загружаем список и закрываем rows до вызовов Telegram API и UPDATE,
 	// чтобы не удерживать единственное соединение в пуле (MaxOpenConns=1).
 	users, err := loadPenUsersForRefresh(db)
@@ -150,13 +152,7 @@ func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
 
 	for _, u := range users {
 		// Запрашиваем информацию о пользователе в чате
-		cfg := tgbotapi.GetChatMemberConfig{
-			ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
-				ChatID: u.chatID,
-				UserID: u.userID,
-			},
-		}
-		member, err := bot.GetChatMember(cfg)
+		member, err := bot.GetChatMember(context.Background(), &telegram.GetChatMemberParams{ChatID: u.chatID, UserID: u.userID})
 		if err != nil {
 			log.Printf("RefreshUsernames: GetChatMember failed for user %d in chat %d: %v", u.userID, u.chatID, err)
 			// не обновляем, оставляем старое имя
@@ -164,12 +160,13 @@ func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
 			continue
 		}
 
-		newName := member.User.UserName
-		if newName == "" {
+		user := TelegramMemberUser(*member)
+		if user == nil || user.Username == "" {
 			// если у пользователя нет username — пропускаем
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
+		newName := user.Username
 
 		if !u.oldName.Valid || newName != u.oldName.String {
 			_, err := db.Exec("UPDATE pens SET pen_name = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newName, u.userID, u.chatID)
@@ -188,7 +185,7 @@ func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
 }
 
 // StartPenNameUpdateRoutine запускает горутину для еженедельного актуализирования pen_name
-func StartPenNameUpdateRoutine(db *sql.DB, bot *tgbotapi.BotAPI) {
+func StartPenNameUpdateRoutine(db *sql.DB, bot *telegram.Bot) {
     go func() {
         log.Printf("Pen name update routine started")
 

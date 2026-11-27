@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -749,7 +749,7 @@ func (m ChatMember) NameKeys() []string {
 // RememberChatMember refreshes the chat roster from an incoming message, so
 // facts told about somebody in the third person can later be matched to a
 // telegram ID by name.
-func RememberChatMember(db *sql.DB, chatID int64, user *tgbotapi.User) {
+func RememberChatMember(db *sql.DB, chatID int64, user *models.User) {
 	if db == nil || user == nil || user.ID == 0 || user.IsBot {
 		return
 	}
@@ -762,7 +762,7 @@ func RememberChatMember(db *sql.DB, chatID int64, user *tgbotapi.User) {
 			last_name = excluded.last_name,
 			user_name = excluded.user_name,
 			updated_at = excluded.updated_at`,
-		chatID, user.ID, user.FirstName, user.LastName, user.UserName,
+		chatID, user.ID, user.FirstName, user.LastName, user.Username,
 		time.Now().UTC().Format(sqliteTimestampLayout),
 	)
 	if err != nil {
@@ -810,13 +810,13 @@ func LoadChatMembers(db *sql.DB, chatID int64) ([]ChatMember, error) {
 // "Dmitriy" all reach the same person. The result is 0 when the name does not
 // resolve to exactly one member, so a name two people share never grants
 // access to the facts of either.
-func ResolveGeminiFactUserID(db *sql.DB, chatID int64, factName string, author *tgbotapi.User) int64 {
+func ResolveGeminiFactUserID(db *sql.DB, chatID int64, factName string, author *models.User) int64 {
 	factKey := NormalizePersonName(factName)
 	if factKey == "" {
 		return 0
 	}
 
-	if author != nil && author.ID != 0 && containsString(PersonNameKeys(author.FirstName, author.LastName, author.UserName), factKey) {
+	if author != nil && author.ID != 0 && containsString(PersonNameKeys(author.FirstName, author.LastName, author.Username), factKey) {
 		return author.ID
 	}
 
@@ -857,7 +857,7 @@ func singleMemberByNameKey(members []ChatMember, nameKey string, selfID int64) i
 // recorded to the user they are about, and returns how many were claimed. A
 // fact is claimed only when its name belongs to this user alone: while another
 // member of the chat answers to the same name, it stays ownerless.
-func ClaimOwnerlessGeminiUserFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
+func ClaimOwnerlessGeminiUserFacts(db *sql.DB, chatID int64, user *models.User) (int64, error) {
 	if db == nil {
 		return 0, errors.New("db is nil")
 	}
@@ -865,7 +865,7 @@ func ClaimOwnerlessGeminiUserFacts(db *sql.DB, chatID int64, user *tgbotapi.User
 		return 0, nil
 	}
 
-	ownKeys := PersonNameKeys(user.FirstName, user.LastName, user.UserName)
+	ownKeys := PersonNameKeys(user.FirstName, user.LastName, user.Username)
 	if len(ownKeys) == 0 {
 		return 0, nil
 	}
@@ -1119,7 +1119,7 @@ func DeleteAllGeminiMemories(db *sql.DB) error {
 // Гарантия узкая: сведения о человеке могут остаться в репликах бота и других
 // участников — их не отличить от остального разговора. Реплики, записанные до
 // миграции 6, идут без tg id и доживают свои сутки нетронутыми.
-func ForgetGeminiUser(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
+func ForgetGeminiUser(db *sql.DB, chatID int64, user *models.User) (int64, error) {
 	if db == nil {
 		return 0, errors.New("db is nil")
 	}

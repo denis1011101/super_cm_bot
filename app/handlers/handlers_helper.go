@@ -9,7 +9,8 @@ import (
 
 	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/app/config"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 var runtimeConfig config.Config
@@ -23,7 +24,7 @@ type selectionCommand struct {
 	choose     func(*sql.DB, int64) (message string, completed bool)
 }
 
-func (c *selectionCommand) runManual(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, scheduler *SelectionScheduler) {
+func (c *selectionCommand) runManual(update models.Update, bot *telegram.Bot, db *sql.DB, scheduler *SelectionScheduler) {
 	selectionMu.Lock()
 	defer selectionMu.Unlock()
 
@@ -35,8 +36,8 @@ func (c *selectionCommand) runManual(update tgbotapi.Update, bot *tgbotapi.BotAP
 }
 
 // run requires selectionMu to be held.
-func (c *selectionCommand) run(message *tgbotapi.Message, bot *tgbotapi.BotAPI, db *sql.DB, automatic bool) (completed bool, retryAt time.Time) {
-	update := tgbotapi.Update{Message: message}
+func (c *selectionCommand) run(message *models.Message, bot *telegram.Bot, db *sql.DB, automatic bool) (completed bool, retryAt time.Time) {
+	update := models.Update{Message: message}
 	if !automatic && !ensureSelectionCaller(update, bot, db) {
 		return false, time.Time{}
 	}
@@ -50,7 +51,7 @@ func (c *selectionCommand) run(message *tgbotapi.Message, bot *tgbotapi.BotAPI, 
 		if automatic {
 			return false, lastUpdate.Add(runtimeConfig.SpinCooldown())
 		}
-		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, message.MessageID)
+		app.SendMessage(chatID, "Могу только по губам поводить. Приходи позже...", bot, message.ID)
 		return false, time.Time{}
 	}
 
@@ -59,12 +60,12 @@ func (c *selectionCommand) run(message *tgbotapi.Message, bot *tgbotapi.BotAPI, 
 	}
 	reply, completed := c.choose(db, chatID)
 	if reply != "" && (completed || !automatic) {
-		app.SendMessage(chatID, reply, bot, message.MessageID)
+		app.SendMessage(chatID, reply, bot, message.ID)
 	}
 	return completed, time.Time{}
 }
 
-func ensureSelectionCaller(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) bool {
+func ensureSelectionCaller(update models.Update, bot *telegram.Bot, db *sql.DB) bool {
 	userID := update.Message.From.ID
 	exists, err := app.UserExists(db, userID, update.Message.Chat.ID)
 	if err != nil {
@@ -97,11 +98,11 @@ func checkIsSpinNotLegal(lastUpdate time.Time) bool {
 	return false
 }
 
-func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendWelcomeMessage bool) {
+func registerBot(update models.Update, bot *telegram.Bot, db *sql.DB, sendWelcomeMessage bool) {
 	// Логика регистрации в боте
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
-	userName := update.Message.From.UserName
+	userName := update.Message.From.Username
 
 	// Подготовка запроса для вставки пользователя в базу данных
 	stmt, err := db.Prepare(`
@@ -127,18 +128,18 @@ func registerBot(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB, sendW
 
 	// Отправка ответного сообщения, если флаг установлен
 	if sendWelcomeMessage {
-		app.SendMessage(chatID, "Велком ту зе клаб, бади 😎🤝😎", bot, update.Message.MessageID)
+		app.SendMessage(chatID, "Велком ту зе клаб, бади 😎🤝😎", bot, update.Message.ID)
 	}
 
 	fmt.Println("User registered in bot")
 }
 
 // isUserJoinEvent проверяет, является ли сообщение событием входа пользователя в чат
-func isUserJoinEvent(update tgbotapi.Update) bool {
+func isUserJoinEvent(update models.Update) bool {
 	return update.Message.NewChatMembers != nil
 }
 
 // isUserLeaveEvent проверяет, является ли сообщение событием выхода пользователя из чата
-func isUserLeaveEvent(update tgbotapi.Update) bool {
+func isUserLeaveEvent(update models.Update) bool {
 	return update.Message.LeftChatMember != nil
 }

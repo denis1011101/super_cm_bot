@@ -2,7 +2,9 @@ package tests
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -16,7 +18,8 @@ import (
 	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/app/handlers"
 	"github.com/denis1011101/super_cm_bot/tests/testutils"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -96,8 +99,8 @@ func TestBotE2E(t *testing.T) {
 	}
 
 	type sentMessage struct {
-		Text             string
-		ReplyToMessageID string
+		Text            string
+		ReplyParameters string
 	}
 
 	var (
@@ -107,14 +110,14 @@ func TestBotE2E(t *testing.T) {
 
 	client := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			if err := r.ParseForm(); err != nil {
-				t.Fatalf("mock transport failed to parse form: %v", err)
-			}
 			if strings.Contains(r.URL.Path, "/sendMessage") {
+				if err := r.ParseMultipartForm(1 << 20); err != nil {
+					return nil, err
+				}
 				sentMessagesMu.Lock()
 				sentMessages = append(sentMessages, sentMessage{
-					Text:             r.Form.Get("text"),
-					ReplyToMessageID: r.Form.Get("reply_to_message_id"),
+					Text:            r.Form.Get("text"),
+					ReplyParameters: r.Form.Get("reply_parameters"),
 				})
 				sentMessagesMu.Unlock()
 			}
@@ -132,11 +135,7 @@ func TestBotE2E(t *testing.T) {
 	}
 
 	// Создаем мок-объект бота с фиктивным токеном и кастомным transport без реального listener
-	apiURL := "https://telegram.test/bot%s/%s"
-	bot, err := tgbotapi.NewBotAPIWithClient("fake-token", apiURL, client)
-	if err != nil {
-		t.Fatalf("Error creating bot: %v", err)
-	}
+	bot := newMockTelegramBot(t, client)
 
 	// Перенаправляем логи в потокобезопасный буфер: обработчик пишет в него
 	// из отдельной горутины, а подтесты периодически читают накопленные логи.
@@ -146,10 +145,10 @@ func TestBotE2E(t *testing.T) {
 	t.Cleanup(func() { log.SetOutput(previousLogOutput) })
 
 	// Создаем канал обновлений
-	updates := make(chan tgbotapi.Update, 1)
+	updates := make(chan models.Update, 1)
 
 	// Обработчики команд
-	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
+	commandHandlers := map[string]func(models.Update, *telegram.Bot, *sql.DB){
 		"/pen":     handlers.HandleSpin,
 		"/giga":    handlers.ChooseGiga,
 		"/unh":     handlers.ChooseUnhandsome,
@@ -179,8 +178,7 @@ func TestBotE2E(t *testing.T) {
 					}
 
 					if klewoRe.MatchString(strings.ToLower(update.Message.Text)) {
-						echo := tgbotapi.NewMessage(chatID, update.Message.Text)
-						_, _ = bot.Send(echo)
+						_, _ = bot.SendMessage(context.Background(), &telegram.SendMessageParams{ChatID: chatID, Text: update.Message.Text})
 					}
 				}
 			}
@@ -234,8 +232,8 @@ func TestBotE2E(t *testing.T) {
 			if msg.Text != testText {
 				continue
 			}
-			if msg.ReplyToMessageID != "" {
-				t.Fatalf("expected echo without reply_to_message_id, got %q", msg.ReplyToMessageID)
+			if msg.ReplyParameters != "" {
+				t.Fatalf("expected echo without reply_parameters, got %q", msg.ReplyParameters)
 			}
 			return
 		}
@@ -246,6 +244,9 @@ func TestBotE2E(t *testing.T) {
 	// Тестирование команды /pen и регистрации нового пользователя
 	t.Run("PenCommandAndRegistration", func(t *testing.T) {
 		t.Log("Testing /pen command and registration...")
+		sentMessagesMu.Lock()
+		start := len(sentMessages)
+		sentMessagesMu.Unlock()
 		// Отправляем команду /pen
 		testutils.SendMessage(t, updates, specificChatID, 33333333, "/pen")
 
@@ -265,6 +266,16 @@ func TestBotE2E(t *testing.T) {
 		// Проверяем результат остальных пользователей в базе данных
 		testutils.CheckPenLength(t, db, 11111111, nil, 5)
 		testutils.CheckPenLength(t, db, 22222222, nil, 3)
+
+		sentMessagesMu.Lock()
+		defer sentMessagesMu.Unlock()
+		for _, message := range sentMessages[start:] {
+			var reply models.ReplyParameters
+			if json.Unmarshal([]byte(message.ReplyParameters), &reply) == nil && reply.MessageID == 1 {
+				return
+			}
+		}
+		t.Fatal("expected /pen to reply to Telegram message 1")
 	})
 
 	// Тестирование команды /pen в течение 4 часов
@@ -405,20 +416,20 @@ func TestBotE2E(t *testing.T) {
 	// Тестирование регистрации пользователя при вступлении в чат
 	t.Run("UserJoinEventRegistration", func(t *testing.T) {
 		t.Log("Testing user registration on join event...")
-		update := tgbotapi.Update{
-			UpdateID: 1,
-			Message: &tgbotapi.Message{
-				Chat: &tgbotapi.Chat{
+		update := models.Update{
+			ID: 1,
+			Message: &models.Message{
+				Chat: models.Chat{
 					ID: specificChatID,
 				},
-				From: &tgbotapi.User{
+				From: &models.User{
 					ID:       55555555,
-					UserName: "testuser",
+					Username: "testuser",
 				},
-				NewChatMembers: []tgbotapi.User{
+				NewChatMembers: []models.User{
 					{
 						ID:       55555555,
-						UserName: "testuser",
+						Username: "testuser",
 					},
 				},
 			},
@@ -433,19 +444,19 @@ func TestBotE2E(t *testing.T) {
 	// Тестирование отсутствия регистрации при покидании чата
 	t.Run("UserLeaveEventNoRegistration", func(t *testing.T) {
 		t.Log("Testing no registration on leave event...")
-		update := tgbotapi.Update{
-			UpdateID: 2,
-			Message: &tgbotapi.Message{
-				Chat: &tgbotapi.Chat{
+		update := models.Update{
+			ID: 2,
+			Message: &models.Message{
+				Chat: models.Chat{
 					ID: specificChatID,
 				},
-				From: &tgbotapi.User{
+				From: &models.User{
 					ID:       66666666,
-					UserName: "testuser",
+					Username: "testuser",
 				},
-				LeftChatMember: &tgbotapi.User{
+				LeftChatMember: &models.User{
 					ID:       66666666,
-					UserName: "testuser",
+					Username: "testuser",
 				},
 			},
 		}
