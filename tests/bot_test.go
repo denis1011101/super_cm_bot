@@ -10,7 +10,8 @@ import (
 
 	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/tests/testutils"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -138,8 +139,18 @@ func TestArchiveInactiveUsers_179DaysNotArchived(t *testing.T) {
 	}
 }
 
+func newMockTelegramBot(t *testing.T, client *http.Client, options ...telegram.Option) *telegram.Bot {
+	t.Helper()
+	options = append(options, telegram.WithServerURL("https://telegram.test"), telegram.WithHTTPClient(time.Minute, client))
+	bot, err := telegram.New("123456:fake-token", options...)
+	if err != nil {
+		t.Fatalf("create mock Telegram bot: %v", err)
+	}
+	return bot
+}
+
 // mockSendBot возвращает бота, чей sendMessage успешен, если sendOK
-func mockSendBot(t *testing.T, sendOK bool) *tgbotapi.BotAPI {
+func mockSendBot(t *testing.T, sendOK bool) *telegram.Bot {
 	t.Helper()
 	client := &http.Client{
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -160,11 +171,7 @@ func mockSendBot(t *testing.T, sendOK bool) *tgbotapi.BotAPI {
 			}, nil
 		}),
 	}
-	bot, err := tgbotapi.NewBotAPIWithClient("fake-token", "https://telegram.test/bot%s/%s", client)
-	if err != nil {
-		t.Fatalf("Failed to create mock bot: %v", err)
-	}
-	return bot
+	return newMockTelegramBot(t, client)
 }
 
 // TestSendMessageRecordsOutgoingMemory — ответ команды уходит в память Gemini,
@@ -209,7 +216,7 @@ func TestRecordCommandMemory(t *testing.T) {
 	db := setupBotDB(t)
 	chatID := int64(-987654321)
 
-	app.RecordCommandMemory(db, chatID, &tgbotapi.User{ID: 42, FirstName: "Enroscado"}, "/myfacts")
+	app.RecordCommandMemory(db, chatID, &models.User{ID: 42, FirstName: "Enroscado"}, "/myfacts")
 
 	context, err := app.LoadGeminiMemoryContext(db, chatID, 10, time.Now().Add(-time.Hour))
 	if err != nil {
@@ -275,10 +282,7 @@ func TestRefreshUsernames_UpdatesWithSingleConnection(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 		}),
 	}
-	bot, err := tgbotapi.NewBotAPIWithClient("fake-token", "https://telegram.test/bot%s/%s", client)
-	if err != nil {
-		t.Fatalf("mock bot: %v", err)
-	}
+	bot := newMockTelegramBot(t, client)
 
 	done := make(chan error, 1)
 	go func() { done <- app.RefreshUsernames(db, bot) }()

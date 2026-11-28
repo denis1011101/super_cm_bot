@@ -19,7 +19,8 @@ import (
 	"time"
 
 	"github.com/denis1011101/super_cm_bot/app/agentbus"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 const (
@@ -62,11 +63,12 @@ type GeminiGoogleSearchAdapter struct{}
 var geminiSaveTagRe = regexp.MustCompile(`(?is)\[SAVE:\s*(.*?)\]`)
 var geminiCommandTagRe = regexp.MustCompile(`(?is)\[CMD:\s*(/giga|/unh)\s*\]`)
 
-type GeminiAutoCommandHandler func(tgbotapi.Message, string)
+type GeminiAutoCommandHandler func(models.Message, string)
 
 type GeminiAgentConfig struct {
 	DB                 *sql.DB
-	Bot                *tgbotapi.BotAPI
+	Bot                *telegram.Bot
+	BotUsername        string
 	Client             *http.Client
 	Now                func() time.Time
 	Search             SearchAdapter
@@ -114,12 +116,13 @@ func skipsGoogleSearch(model string) bool {
 }
 
 type pendingGeminiResponse struct {
-	message tgbotapi.Message
+	message models.Message
 }
 
 type GeminiAgent struct {
 	db             *sql.DB
-	bot            *tgbotapi.BotAPI
+	bot            *telegram.Bot
+	botUsername    string
 	client         *http.Client
 	now            func() time.Time
 	search         SearchAdapter
@@ -148,7 +151,7 @@ type GeminiAgent struct {
 	pendingResponses map[int64]*pendingGeminiResponse
 }
 
-func NewGeminiAgent(db *sql.DB, bot *tgbotapi.BotAPI) *GeminiAgent {
+func NewGeminiAgent(db *sql.DB, bot *telegram.Bot, botUsername string) *GeminiAgent {
 	var fallbackModels []string
 	if raw, ok := os.LookupEnv("GEMINI_FALLBACK_MODEL"); ok {
 		fallbackModels = strings.Split(raw, ",")
@@ -158,6 +161,7 @@ func NewGeminiAgent(db *sql.DB, bot *tgbotapi.BotAPI) *GeminiAgent {
 	return NewGeminiAgentWithConfig(GeminiAgentConfig{
 		DB:             db,
 		Bot:            bot,
+		BotUsername:    botUsername,
 		Model:          os.Getenv("GEMINI_MODEL"),
 		FallbackModels: fallbackModels,
 		SearchModel:    searchModel,
@@ -215,6 +219,7 @@ func NewGeminiAgentWithConfig(cfg GeminiAgentConfig) *GeminiAgent {
 	return &GeminiAgent{
 		db:               cfg.DB,
 		bot:              cfg.Bot,
+		botUsername:      cfg.BotUsername,
 		client:           client,
 		now:              nowFn,
 		search:           search,
@@ -348,8 +353,8 @@ func classifyGeminiError(err error) (agentbus.Health, agentbus.Quota, string) {
 	return agentbus.HealthDegraded, agentbus.QuotaUnknown, agentbus.ErrOther
 }
 
-func (a *GeminiAgent) TryRespond(update tgbotapi.Update, targetChatID int64) bool {
-	if update.Message == nil || update.Message.Chat == nil {
+func (a *GeminiAgent) TryRespond(update models.Update, targetChatID int64) bool {
+	if update.Message == nil || update.Message.Chat.ID == 0 {
 		return false
 	}
 	m := update.Message
@@ -368,18 +373,14 @@ func (a *GeminiAgent) TryRespond(update tgbotapi.Update, targetChatID int64) boo
 	fields := strings.Fields(text)
 	if len(fields) > 0 && strings.HasPrefix(fields[0], "@") {
 		mention := strings.TrimRight(fields[0], ".,:;!?")
-		botUsername := ""
-		if a.bot != nil {
-			botUsername = a.bot.Self.UserName
-		}
-		if botUsername == "" || !strings.EqualFold(mention, "@"+botUsername) {
+		if a.botUsername == "" || !strings.EqualFold(mention, "@"+a.botUsername) {
 			return false
 		}
 	}
 
 	a.mu.Lock()
 	if pending := a.pendingResponses[targetChatID]; pending != nil {
-		if pending.message.MessageID == m.MessageID {
+		if pending.message.ID == m.ID {
 			a.mu.Unlock()
 			return false
 		}
@@ -420,14 +421,14 @@ func randomGeminiResponseDelay() time.Duration {
 	return geminiDelayMin + time.Duration(milliseconds)*time.Millisecond
 }
 
-func sameGeminiSender(first, second *tgbotapi.User) bool {
+func sameGeminiSender(first, second *models.User) bool {
 	if first == nil || second == nil {
 		return false
 	}
 	if first.ID != 0 || second.ID != 0 {
 		return first.ID == second.ID
 	}
-	return first.UserName != "" && strings.EqualFold(first.UserName, second.UserName)
+	return first.Username != "" && strings.EqualFold(first.Username, second.Username)
 }
 
 func (a *GeminiAgent) schedulePendingResponse(chatID int64, pending *pendingGeminiResponse, delay time.Duration) {
@@ -457,7 +458,7 @@ func (a *GeminiAgent) schedulePendingResponse(chatID int64, pending *pendingGemi
 	}()
 }
 
-func (a *GeminiAgent) TryRespondImmediate(m tgbotapi.Message) bool {
+func (a *GeminiAgent) TryRespondImmediate(m models.Message) bool {
 	if m.From != nil && m.From.IsBot {
 		return false
 	}
@@ -473,13 +474,13 @@ func (a *GeminiAgent) TryRespondImmediate(m tgbotapi.Message) bool {
 
 	// отменяем отложенный ответ, но сохраняем кулдаун:
 	// иначе следующее обычное сообщение сразу запланирует ещё один ответ
-	if m.Chat != nil {
+	if m.Chat.ID != 0 {
 		a.mu.Lock()
 		delete(a.pendingResponses, m.Chat.ID)
 		a.mu.Unlock()
 	}
 
-	go func(msg tgbotapi.Message) {
+	go func(msg models.Message) {
 		if err := a.respond(msg); err != nil {
 			log.Printf("GeminiAgent.TryRespondImmediate: llm/send error: %v", err)
 		}
@@ -488,8 +489,8 @@ func (a *GeminiAgent) TryRespondImmediate(m tgbotapi.Message) bool {
 	return true
 }
 
-func (a *GeminiAgent) respond(m tgbotapi.Message) error {
-	if m.Chat == nil {
+func (a *GeminiAgent) respond(m models.Message) error {
+	if m.Chat.ID == 0 {
 		return fmt.Errorf("message.Chat is nil")
 	}
 
@@ -517,7 +518,7 @@ func (a *GeminiAgent) respond(m tgbotapi.Message) error {
 	}
 	botID := int64(0)
 	if a.bot != nil {
-		botID = a.bot.Self.ID
+		botID = a.bot.ID()
 	}
 	replyContext := buildGeminiReplyContext(m.ReplyToMessage, botID)
 	finalUserText := buildGeminiUserPrompt(userRole, userText, memoryContext, factsContext, replyContext)
@@ -535,31 +536,25 @@ func (a *GeminiAgent) respond(m tgbotapi.Message) error {
 	}
 
 	if a.bot == nil {
-		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, factsToSave, a.now())
+		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, 0, factsToSave, a.now())
 		return nil
 	}
 
-	msg := tgbotapi.NewMessage(m.Chat.ID, reply)
-	msg.ReplyToMessageID = m.MessageID
-	_, sendErr := a.bot.Send(msg)
+	sentID, sendErr := sendMessage(m.Chat.ID, reply, a.bot, m.ID)
 	if sendErr == nil {
-		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, factsToSave, a.now())
+		saveGeminiArtifacts(a.db, m.Chat.ID, m.From, userRole, userText, reply, sentID, factsToSave, a.now())
 		a.maybeRunAutoCommand(m, autoCommand)
 	}
 	return sendErr
 }
 
-func saveMemoryPair(db *sql.DB, chatID, userID int64, userRole, userText, reply string, now time.Time) {
-	if err := SaveGeminiMemory(db, chatID, userID, normalizeMemoryRole(userRole, "user"), userText, now); err != nil {
+func saveGeminiArtifacts(db *sql.DB, chatID int64, author *models.User, userRole, userText, reply string, replyMessageID int, facts []GeminiUserFact, now time.Time) {
+	if err := SaveGeminiMemory(db, chatID, tgUserID(author), normalizeMemoryRole(userRole, "user"), userText, now); err != nil {
 		log.Printf("GeminiAgent.respond: save user memory error: %v", err)
 	}
-	if err := SaveGeminiMemory(db, chatID, 0, "bot", reply, now); err != nil {
+	if err := saveGeminiBotMessage(db, chatID, replyMessageID, reply, now); err != nil {
 		log.Printf("GeminiAgent.respond: save assistant memory error: %v", err)
 	}
-}
-
-func saveGeminiArtifacts(db *sql.DB, chatID int64, author *tgbotapi.User, userRole, userText, reply string, facts []GeminiUserFact, now time.Time) {
-	saveMemoryPair(db, chatID, tgUserID(author), userRole, userText, reply, now)
 	for _, fact := range facts {
 		userID := ResolveGeminiFactUserID(db, chatID, fact.UserName, author)
 		if err := SaveGeminiUserFact(db, chatID, userID, fact.UserName, fact.Fact, now); err != nil {
@@ -568,7 +563,7 @@ func saveGeminiArtifacts(db *sql.DB, chatID int64, author *tgbotapi.User, userRo
 	}
 }
 
-func (a *GeminiAgent) maybeRunAutoCommand(source tgbotapi.Message, cmd string) {
+func (a *GeminiAgent) maybeRunAutoCommand(source models.Message, cmd string) {
 	if cmd == "" {
 		return
 	}
@@ -630,14 +625,14 @@ func (a *GeminiAgent) canExecuteAutoCommand(chatID int64, cmd string) bool {
 
 // memorySpeakerName — имя, под которым человек виден Gemini в истории чата.
 // Это только подпись для промпта: адресуемся к строкам памяти по tg id.
-func memorySpeakerName(user *tgbotapi.User) string {
+func memorySpeakerName(user *models.User) string {
 	if user == nil {
 		return "user"
 	}
 	if name := normalizeMemoryRole(user.FirstName, ""); name != "" {
 		return name
 	}
-	if name := normalizeMemoryRole(user.UserName, ""); name != "" {
+	if name := normalizeMemoryRole(user.Username, ""); name != "" {
 		return name
 	}
 	return "user"
@@ -645,7 +640,7 @@ func memorySpeakerName(user *tgbotapi.User) string {
 
 // RecordCommandMemory кладёт в память команду пользователя. Без неё ответ бота
 // на /pen или /giga висит в контексте без автора, и непонятно, о ком речь.
-func RecordCommandMemory(db *sql.DB, chatID int64, author *tgbotapi.User, text string) {
+func RecordCommandMemory(db *sql.DB, chatID int64, author *models.User, text string) {
 	if db == nil {
 		return
 	}
@@ -655,7 +650,7 @@ func RecordCommandMemory(db *sql.DB, chatID int64, author *tgbotapi.User, text s
 }
 
 // tgUserID — id автора реплики, 0 для самого бота и неизвестных отправителей
-func tgUserID(user *tgbotapi.User) int64 {
+func tgUserID(user *models.User) int64 {
 	if user == nil {
 		return 0
 	}
@@ -696,7 +691,7 @@ const maxGeminiReplyQuoteRunes = 500
 // buildGeminiReplyContext описывает сообщение, на которое отвечает пользователь.
 // Память даёт соседние реплики, но не говорит, к какой именно обращаются: в
 // живом чате нужная может быть не последней или вовсе выпасть из лимита.
-func buildGeminiReplyContext(reply *tgbotapi.Message, botID int64) string {
+func buildGeminiReplyContext(reply *models.Message, botID int64) string {
 	if reply == nil {
 		return ""
 	}
@@ -722,7 +717,7 @@ func buildGeminiReplyContext(reply *tgbotapi.Message, botID int64) string {
 // isGeminiSelfMessage отличает наши сообщения от чужих. В системном промпте
 // "bot" — это мы, поэтому чужие боты чата должны остаться под своими именами;
 // на IsBot опираемся, только если свой id неизвестен.
-func isGeminiSelfMessage(author *tgbotapi.User, botID int64) bool {
+func isGeminiSelfMessage(author *models.User, botID int64) bool {
 	if author == nil {
 		return false
 	}

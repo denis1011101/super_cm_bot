@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 )
 
 // SetupTestEnvironment создает временную директорию для теста и меняет текущий рабочий каталог на эту директорию.
@@ -45,15 +45,15 @@ func SetupTestEnvironment(t *testing.T, returnTempDir bool) (string, func()) {
 }
 
 // SendMessage отправляет сообщение в канал обновлений
-func SendMessage(t *testing.T, updates chan tgbotapi.Update, chatID int64, userID int64, text string) {
-	update := tgbotapi.Update{
-		UpdateID: 1,
-		Message: &tgbotapi.Message{
-			MessageID: 1,
-			From: &tgbotapi.User{
+func SendMessage(t *testing.T, updates chan models.Update, chatID int64, userID int64, text string) {
+	update := models.Update{
+		ID: 1,
+		Message: &models.Message{
+			ID: 1,
+			From: &models.User{
 				ID: userID,
 			},
-			Chat: &tgbotapi.Chat{
+			Chat: models.Chat{
 				ID: chatID,
 			},
 			Text: text,

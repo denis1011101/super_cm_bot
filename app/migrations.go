@@ -113,6 +113,19 @@ var migrations = []Migration{
 			WHERE registered_at IS NULL;
 			`,
 	},
+	{
+		ID:   8,
+		Name: "link_gemini_memories_to_telegram_messages",
+		SQL: `
+			ALTER TABLE gemini_memories ADD COLUMN telegram_message_id INTEGER;
+			ALTER TABLE gemini_memories ADD COLUMN telegram_update_id INTEGER;
+			CREATE UNIQUE INDEX idx_gemini_memories_bot_message
+				ON gemini_memories(chat_id, telegram_message_id)
+				WHERE role = 'bot' AND user_id = 0 AND telegram_update_id IS NULL AND telegram_message_id IS NOT NULL;
+			CREATE UNIQUE INDEX idx_gemini_memories_update
+				ON gemini_memories(telegram_update_id);
+			`,
+	},
 }
 
 // RunMigrations выполняет миграции, которые еще не были применены

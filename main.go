@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"math/rand"
@@ -18,7 +19,8 @@ import (
 	"github.com/denis1011101/super_cm_bot/app/agentbus"
 	"github.com/denis1011101/super_cm_bot/app/config"
 	"github.com/denis1011101/super_cm_bot/app/handlers"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 	"github.com/joho/godotenv"
 	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -79,13 +81,17 @@ func main() {
 		log.Fatalf("BOT_TOKEN is not set in .env file")
 	}
 
-	bot, err := tgbotapi.NewBotAPI(botToken)
+	bot, err := telegram.New(botToken, append(app.TelegramPollingOptions(), telegram.WithSkipGetMe(), telegram.WithDebug())...)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	bot.Debug = true
-	log.Printf("Authorized on account %s", bot.Self.UserName)
+	initCtx, cancelInit := context.WithTimeout(context.Background(), 5*time.Second)
+	self, err := bot.GetMe(initCtx)
+	cancelInit()
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("Authorized on account %s", self.Username)
 
 	specificChatIDStr := os.Getenv("SPECIFIC_CHAT_ID")
 	if specificChatIDStr == "" {
@@ -99,11 +105,6 @@ func main() {
 
 	// Пример логирования
 	log.Println("This is a log message")
-
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-
-	updates := bot.GetUpdatesChan(u)
 
 	if runtimeConfig.ResetDB() {
 		if err := app.ResetDatabaseFiles("./data"); err != nil {
@@ -154,36 +155,27 @@ func main() {
 	// Запуск еженедельного архивирования неактивных пользователей
 	app.StartArchiveRoutine(db)
 
-	// Запуск ежедневных команд в случайное время
-	app.StartDailyCommandsRoutine(db, bot, specificChatID, handlers.ChooseGiga, handlers.ChooseUnhandsome)
+	selectionScheduler := handlers.NewSelectionScheduler(specificChatID)
+	go selectionScheduler.Run(context.Background(), bot, db)
 
 	// Ночная очистка памяти Gemini
 	app.StartGeminiMemoryCleanupRoutine(db, nil)
 
-	geminiAgent := app.NewGeminiAgent(db, bot)
+	geminiAgent := app.NewGeminiAgent(db, bot, self.Username)
 	geminiAgent.SetSpinCooldown(runtimeConfig.SpinCooldown())
-	startAgentBus(geminiAgent, bot.Self.UserName)
-	geminiAgent.SetAutoCommandHandler(func(source tgbotapi.Message, cmd string) {
-		synthetic := source
-		synthetic.Text = cmd
-		update := tgbotapi.Update{Message: &synthetic}
-
-		switch cmd {
-		case "/giga":
-			handlers.ChooseGiga(update, bot, db)
-		case "/unh":
-			handlers.ChooseUnhandsome(update, bot, db)
-		}
+	startAgentBus(geminiAgent, self.Username)
+	geminiAgent.SetAutoCommandHandler(func(source models.Message, cmd string) {
+		selectionScheduler.TryAutomatic(source, cmd, bot, db)
 	})
 
 	// Обработчики команд
-	commandHandlers := map[string]func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB){
+	commandHandlers := map[string]func(models.Update, *telegram.Bot, *sql.DB){
 		"/pen@super_cum_lovers_bot":           handlers.HandleSpin,
 		"/pen":                                handlers.HandleSpin,
-		"/giga@super_cum_lovers_bot":          handlers.ChooseGiga,
-		"/giga":                               handlers.ChooseGiga,
-		"/unhandsome@super_cum_lovers_bot":    handlers.ChooseUnhandsome,
-		"/unh":                                handlers.ChooseUnhandsome,
+		"/giga@super_cum_lovers_bot":          selectionScheduler.ChooseGiga,
+		"/giga":                               selectionScheduler.ChooseGiga,
+		"/unhandsome@super_cum_lovers_bot":    selectionScheduler.ChooseUnhandsome,
+		"/unh":                                selectionScheduler.ChooseUnhandsome,
 		"/toppens":                            handlers.TopLength,
 		"/toppens@super_cum_lovers_bot":       handlers.TopLength,
 		"/toplength@super_cum_lovers_bot":     handlers.TopLength,
@@ -201,10 +193,17 @@ func main() {
 	}
 
 	// Обработка обновлений
-	for update := range updates {
+	bot.RegisterHandlerMatchFunc(func(*models.Update) bool { return true }, func(_ context.Context, bot *telegram.Bot, event *models.Update) {
+		if event.MessageReaction != nil || event.MessageReactionCount != nil {
+			if err := app.RecordTelegramReaction(db, specificChatID, *event); err != nil {
+				log.Printf("Record Telegram reaction: %v", err)
+			}
+			return
+		}
+		update := *event
 		if update.MyChatMember != nil { // Обработка добавления бота в чат
 			handlers.HandleBotAddition(update, bot)
-			continue
+			return
 		}
 
 		if update.Message != nil {
@@ -239,13 +238,12 @@ func main() {
 				} else {
 					// если нас тегают или отвечают на наше сообщение -> immediate Gemini
 					isMention := false
-					if update.Message.Text != "" && bot != nil && bot.Self.UserName != "" {
-						isMention = strings.Contains(update.Message.Text, "@"+bot.Self.UserName)
+					if update.Message.Text != "" && self.Username != "" {
+						isMention = strings.Contains(update.Message.Text, "@"+self.Username)
 					}
 					isReplyToBot := update.Message.ReplyToMessage != nil &&
 						update.Message.ReplyToMessage.From != nil &&
-						bot != nil &&
-						update.Message.ReplyToMessage.From.ID == bot.Self.ID
+						update.Message.ReplyToMessage.From.ID == self.ID
 
 					if isMention || isReplyToBot {
 						_ = geminiAgent.TryRespondImmediate(*update.Message)
@@ -255,7 +253,8 @@ func main() {
 				}
 			}
 		}
-	}
+	})
+	bot.Start(context.Background())
 }
 
 // startAgentBus exposes the shared status board over MCP and points this bot's

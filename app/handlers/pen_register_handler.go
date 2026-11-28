@@ -5,11 +5,12 @@ import (
 	"log"
 
 	"github.com/denis1011101/super_cm_bot/app"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 // HandlepenCommand регистрирует всех пользователей кто пишет в чат
-func HandlePenCommand(update tgbotapi.Update, bot *tgbotapi.BotAPI, db *sql.DB) {
+func HandlePenCommand(update models.Update, bot *telegram.Bot, db *sql.DB) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
 

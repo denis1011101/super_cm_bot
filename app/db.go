@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -233,6 +233,7 @@ func GetGigaLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	err := db.QueryRow("SELECT MAX(handsome_last_update_at) FROM pens WHERE tg_chat_id = ?", chatID).Scan(&lastUpdateText)
 	if err != nil {
 		log.Printf("Error querying last update time: %v", err)
+		return time.Time{}, err
 	} else {
 		log.Printf("Last update time retrieved successfully")
 	}
@@ -255,6 +256,7 @@ func GetUnhandsomeLastUpdateTime(db *sql.DB, chatID int64) (time.Time, error) {
 	err := db.QueryRow("SELECT MAX(unhandsome_last_update_at) FROM pens WHERE tg_chat_id = ?", chatID).Scan(&lastUpdateText)
 	if err != nil {
 		log.Printf("Error querying last update time: %v", err)
+		return time.Time{}, err
 	} else {
 		log.Printf("Last update time retrieved successfully")
 	}
@@ -572,6 +574,20 @@ func SaveGeminiMemory(db *sql.DB, chatID, userID int64, role, content string, cr
 	return err
 }
 
+// saveGeminiBotMessage also records the message ID so reactions can be attributed to the bot.
+// A blank content value records ownership only, for replies that bypass memory.
+func saveGeminiBotMessage(db *sql.DB, chatID int64, messageID int, content string, createdAt time.Time) error {
+	if messageID <= 0 {
+		return SaveGeminiMemory(db, chatID, 0, "bot", content, createdAt)
+	}
+	_, err := db.Exec(`
+		INSERT INTO gemini_memories (chat_id, user_id, role, content, created_at, telegram_message_id)
+		VALUES (?, 0, 'bot', ?, ?, ?)
+		ON CONFLICT DO NOTHING`,
+		chatID, strings.TrimSpace(content), createdAt.UTC().Format(sqliteTimestampLayout), messageID)
+	return err
+}
+
 func normalizeMemoryRole(value, fallback string) string {
 	replacer := strings.NewReplacer("\r", " ", "\n", " ", ":", " ")
 	cleaned := strings.TrimSpace(replacer.Replace(value))
@@ -733,7 +749,7 @@ func (m ChatMember) NameKeys() []string {
 // RememberChatMember refreshes the chat roster from an incoming message, so
 // facts told about somebody in the third person can later be matched to a
 // telegram ID by name.
-func RememberChatMember(db *sql.DB, chatID int64, user *tgbotapi.User) {
+func RememberChatMember(db *sql.DB, chatID int64, user *models.User) {
 	if db == nil || user == nil || user.ID == 0 || user.IsBot {
 		return
 	}
@@ -746,7 +762,7 @@ func RememberChatMember(db *sql.DB, chatID int64, user *tgbotapi.User) {
 			last_name = excluded.last_name,
 			user_name = excluded.user_name,
 			updated_at = excluded.updated_at`,
-		chatID, user.ID, user.FirstName, user.LastName, user.UserName,
+		chatID, user.ID, user.FirstName, user.LastName, user.Username,
 		time.Now().UTC().Format(sqliteTimestampLayout),
 	)
 	if err != nil {
@@ -794,13 +810,13 @@ func LoadChatMembers(db *sql.DB, chatID int64) ([]ChatMember, error) {
 // "Dmitriy" all reach the same person. The result is 0 when the name does not
 // resolve to exactly one member, so a name two people share never grants
 // access to the facts of either.
-func ResolveGeminiFactUserID(db *sql.DB, chatID int64, factName string, author *tgbotapi.User) int64 {
+func ResolveGeminiFactUserID(db *sql.DB, chatID int64, factName string, author *models.User) int64 {
 	factKey := NormalizePersonName(factName)
 	if factKey == "" {
 		return 0
 	}
 
-	if author != nil && author.ID != 0 && containsString(PersonNameKeys(author.FirstName, author.LastName, author.UserName), factKey) {
+	if author != nil && author.ID != 0 && containsString(PersonNameKeys(author.FirstName, author.LastName, author.Username), factKey) {
 		return author.ID
 	}
 
@@ -841,7 +857,7 @@ func singleMemberByNameKey(members []ChatMember, nameKey string, selfID int64) i
 // recorded to the user they are about, and returns how many were claimed. A
 // fact is claimed only when its name belongs to this user alone: while another
 // member of the chat answers to the same name, it stays ownerless.
-func ClaimOwnerlessGeminiUserFacts(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
+func ClaimOwnerlessGeminiUserFacts(db *sql.DB, chatID int64, user *models.User) (int64, error) {
 	if db == nil {
 		return 0, errors.New("db is nil")
 	}
@@ -849,7 +865,7 @@ func ClaimOwnerlessGeminiUserFacts(db *sql.DB, chatID int64, user *tgbotapi.User
 		return 0, nil
 	}
 
-	ownKeys := PersonNameKeys(user.FirstName, user.LastName, user.UserName)
+	ownKeys := PersonNameKeys(user.FirstName, user.LastName, user.Username)
 	if len(ownKeys) == 0 {
 		return 0, nil
 	}
@@ -1027,13 +1043,18 @@ func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Tim
 		return "", nil
 	}
 
+	const maxReactionQuoteChars = 160
+	cutoff := since.UTC().Format(sqliteTimestampLayout)
 	rows, err := db.Query(
-		`SELECT role, content
-		FROM gemini_memories
-		WHERE chat_id = ? AND created_at >= ?
-		ORDER BY created_at DESC, id DESC
+		`SELECT memory.role, memory.content, COALESCE(SUBSTR(target.content, 1, ?), '')
+		FROM gemini_memories memory
+		LEFT JOIN gemini_memories target ON memory.telegram_update_id IS NOT NULL
+			AND target.chat_id = memory.chat_id AND target.telegram_message_id = memory.telegram_message_id
+			AND target.role = 'bot' AND target.user_id = 0 AND target.telegram_update_id IS NULL AND target.created_at >= ?
+		WHERE memory.chat_id = ? AND memory.created_at >= ? AND memory.content <> ''
+		ORDER BY memory.created_at DESC, memory.id DESC
 		LIMIT ?`,
-		chatID, since.UTC().Format(sqliteTimestampLayout), limit,
+		maxReactionQuoteChars, cutoff, chatID, cutoff, limit,
 	)
 	if err != nil {
 		return "", err
@@ -1047,12 +1068,13 @@ func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Tim
 	type memoryRow struct {
 		role    string
 		content string
+		quote   string
 	}
 
 	memories := make([]memoryRow, 0, limit)
 	for rows.Next() {
 		var row memoryRow
-		if err := rows.Scan(&row.role, &row.content); err != nil {
+		if err := rows.Scan(&row.role, &row.content, &row.quote); err != nil {
 			return "", err
 		}
 		memories = append(memories, row)
@@ -1072,6 +1094,11 @@ func LoadGeminiMemoryContext(db *sql.DB, chatID int64, limit int, since time.Tim
 		b.WriteString(memories[i].role)
 		b.WriteString(": ")
 		b.WriteString(memories[i].content)
+		if quote := strings.Join(strings.Fields(memories[i].quote), " "); quote != "" {
+			b.WriteString(" «")
+			b.WriteString(quote)
+			b.WriteString("»")
+		}
 	}
 	return b.String(), nil
 }
@@ -1092,7 +1119,7 @@ func DeleteAllGeminiMemories(db *sql.DB) error {
 // Гарантия узкая: сведения о человеке могут остаться в репликах бота и других
 // участников — их не отличить от остального разговора. Реплики, записанные до
 // миграции 6, идут без tg id и доживают свои сутки нетронутыми.
-func ForgetGeminiUser(db *sql.DB, chatID int64, user *tgbotapi.User) (int64, error) {
+func ForgetGeminiUser(db *sql.DB, chatID int64, user *models.User) (int64, error) {
 	if db == nil {
 		return 0, errors.New("db is nil")
 	}

@@ -18,7 +18,7 @@ import (
 	"github.com/denis1011101/super_cm_bot/app"
 	"github.com/denis1011101/super_cm_bot/app/agentbus"
 	"github.com/denis1011101/super_cm_bot/tests/testutils"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/go-telegram/bot/models"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -29,7 +29,7 @@ func parseTextFromGenericResponse(b []byte) string
 func getPersonas(userText string) (string, string)
 
 //go:linkname memorySpeakerName github.com/denis1011101/super_cm_bot/app.memorySpeakerName
-func memorySpeakerName(user *tgbotapi.User) string
+func memorySpeakerName(user *models.User) string
 
 //go:linkname extractGeminiSaveFacts github.com/denis1011101/super_cm_bot/app.extractGeminiSaveFacts
 func extractGeminiSaveFacts(raw string) (string, []app.GeminiUserFact)
@@ -144,22 +144,22 @@ func TestGetPersonas_FlirtyOnly(t *testing.T) {
 func TestMemorySpeakerName(t *testing.T) {
 	cases := []struct {
 		name string
-		user *tgbotapi.User
+		user *models.User
 		want string
 	}{
 		{
 			name: "first_name_preferred",
-			user: &tgbotapi.User{FirstName: "Денис", UserName: "denis1011101"},
+			user: &models.User{FirstName: "Денис", Username: "denis1011101"},
 			want: "Денис",
 		},
 		{
 			name: "username_fallback",
-			user: &tgbotapi.User{UserName: "dima"},
+			user: &models.User{Username: "dima"},
 			want: "dima",
 		},
 		{
 			name: "sanitizes_role",
-			user: &tgbotapi.User{FirstName: "  Вася:\nПупкин  "},
+			user: &models.User{FirstName: "  Вася:\nПупкин  "},
 			want: "Вася Пупкин",
 		},
 		{
@@ -244,15 +244,15 @@ func TestGeminiAgentAutoCommand_UsesConfiguredCooldown(t *testing.T) {
 
 func TestGeminiAgentTryRespond_SetsRandomCooldown(t *testing.T) {
 	db := setupGeminiDB(t)
-	agent := app.NewGeminiAgent(db, nil)
+	agent := app.NewGeminiAgent(db, nil, "")
 
 	chatID := int64(99999)
 	now := time.Now()
 
-	upd := tgbotapi.Update{
-		Message: &tgbotapi.Message{
-			Chat: &tgbotapi.Chat{ID: chatID},
-			From: &tgbotapi.User{IsBot: false},
+	upd := models.Update{
+		Message: &models.Message{
+			Chat: models.Chat{ID: chatID},
+			From: &models.User{IsBot: false},
 			Text: "hello",
 			Date: int(now.Unix()),
 		},
@@ -300,20 +300,20 @@ func TestGeminiAgentTryRespond_DebouncesAndCombinesMessages(t *testing.T) {
 	})
 
 	chatID := int64(100001)
-	user := &tgbotapi.User{ID: 42, FirstName: "Денис"}
-	first := tgbotapi.Update{Message: &tgbotapi.Message{
-		MessageID: 1,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      user,
-		Text:      "первая часть",
-		Date:      int(now.Unix()),
+	user := &models.User{ID: 42, FirstName: "Денис"}
+	first := models.Update{Message: &models.Message{
+		ID:   1,
+		Chat: models.Chat{ID: chatID},
+		From: user,
+		Text: "первая часть",
+		Date: int(now.Unix()),
 	}}
-	second := tgbotapi.Update{Message: &tgbotapi.Message{
-		MessageID: 2,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      user,
-		Text:      "вторая часть",
-		Date:      int(now.Unix()),
+	second := models.Update{Message: &models.Message{
+		ID:   2,
+		Chat: models.Chat{ID: chatID},
+		From: user,
+		Text: "вторая часть",
+		Date: int(now.Unix()),
 	}}
 
 	if !agent.TryRespond(first, chatID) {
@@ -370,25 +370,25 @@ func TestGeminiAgentTryRespondImmediate_CancelsPendingButKeepsCooldown(t *testin
 	})
 
 	chatID := int64(100002)
-	user := &tgbotapi.User{ID: 7, FirstName: "Денис"}
-	scheduled := tgbotapi.Update{Message: &tgbotapi.Message{
-		MessageID: 1,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      user,
-		Text:      "обычное сообщение",
-		Date:      int(now.Unix()),
+	user := &models.User{ID: 7, FirstName: "Денис"}
+	scheduled := models.Update{Message: &models.Message{
+		ID:   1,
+		Chat: models.Chat{ID: chatID},
+		From: user,
+		Text: "обычное сообщение",
+		Date: int(now.Unix()),
 	}}
 
 	if !agent.TryRespond(scheduled, chatID) {
 		t.Fatal("first message should schedule a response")
 	}
 
-	mention := tgbotapi.Message{
-		MessageID: 2,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      user,
-		Text:      "@my_bot привет",
-		Date:      int(now.Unix()),
+	mention := models.Message{
+		ID:   2,
+		Chat: models.Chat{ID: chatID},
+		From: user,
+		Text: "@my_bot привет",
+		Date: int(now.Unix()),
 	}
 	if !agent.TryRespondImmediate(mention) {
 		t.Fatal("mention should trigger an immediate response")
@@ -400,12 +400,12 @@ func TestGeminiAgentTryRespondImmediate_CancelsPendingButKeepsCooldown(t *testin
 		t.Fatalf("expected only the immediate Gemini request, got %d", got)
 	}
 
-	next := tgbotapi.Update{Message: &tgbotapi.Message{
-		MessageID: 3,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      user,
-		Text:      "ещё одно обычное сообщение",
-		Date:      int(time.Now().Unix()),
+	next := models.Update{Message: &models.Message{
+		ID:   3,
+		Chat: models.Chat{ID: chatID},
+		From: user,
+		Text: "ещё одно обычное сообщение",
+		Date: int(time.Now().Unix()),
 	}}
 	if agent.TryRespond(next, chatID) {
 		t.Fatal("cooldown should survive the canceled pending response")
@@ -414,52 +414,50 @@ func TestGeminiAgentTryRespondImmediate_CancelsPendingButKeepsCooldown(t *testin
 
 func TestGeminiAgentTryRespond_GuardChecks(t *testing.T) {
 	db := setupGeminiDB(t)
-	agent := app.NewGeminiAgent(db, &tgbotapi.BotAPI{
-		Self: tgbotapi.User{UserName: "my_bot"},
-	})
+	agent := app.NewGeminiAgent(db, nil, "my_bot")
 	chatID := int64(777)
 	oldDate := int(time.Now().Add(-10 * time.Minute).Unix())
 
 	cases := []struct {
 		name       string
-		update     tgbotapi.Update
+		update     models.Update
 		targetChat int64
 		want       bool
 	}{
-		{"nil_message", tgbotapi.Update{}, chatID, false},
+		{"nil_message", models.Update{}, chatID, false},
 		{
 			"wrong_chat",
-			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID + 1}, From: &tgbotapi.User{}, Text: "hello", Date: oldDate}},
+			models.Update{Message: &models.Message{Chat: models.Chat{ID: chatID + 1}, From: &models.User{}, Text: "hello", Date: oldDate}},
 			chatID,
 			false,
 		},
 		{
 			"from_bot",
-			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: true}, Text: "hello", Date: oldDate}},
+			models.Update{Message: &models.Message{Chat: models.Chat{ID: chatID}, From: &models.User{IsBot: true}, Text: "hello", Date: oldDate}},
 			chatID,
 			false,
 		},
 		{
 			"empty_text",
-			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "   ", Date: oldDate}},
+			models.Update{Message: &models.Message{Chat: models.Chat{ID: chatID}, From: &models.User{IsBot: false}, Text: "   ", Date: oldDate}},
 			chatID,
 			false,
 		},
 		{
 			"command",
-			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "/help", Date: oldDate}},
+			models.Update{Message: &models.Message{Chat: models.Chat{ID: chatID}, From: &models.User{IsBot: false}, Text: "/help", Date: oldDate}},
 			chatID,
 			false,
 		},
 		{
 			"mention_other_user",
-			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "@someone hello", Date: oldDate}},
+			models.Update{Message: &models.Message{Chat: models.Chat{ID: chatID}, From: &models.User{IsBot: false}, Text: "@someone hello", Date: oldDate}},
 			chatID,
 			false,
 		},
 		{
 			"mention_own_bot",
-			tgbotapi.Update{Message: &tgbotapi.Message{Chat: &tgbotapi.Chat{ID: chatID}, From: &tgbotapi.User{IsBot: false}, Text: "@my_bot hi", Date: oldDate}},
+			models.Update{Message: &models.Message{Chat: models.Chat{ID: chatID}, From: &models.User{IsBot: false}, Text: "@my_bot hi", Date: oldDate}},
 			chatID,
 			true,
 		},
@@ -477,7 +475,7 @@ func TestGeminiAgentTryRespond_GuardChecks(t *testing.T) {
 
 func TestGeminiAgentTryRespondImmediate_BasicChecks(t *testing.T) {
 	db := setupGeminiDB(t)
-	agent := app.NewGeminiAgent(db, nil)
+	agent := app.NewGeminiAgent(db, nil, "")
 	orig := os.Getenv("GEMINI_API_KEY")
 	defer func() { _ = os.Setenv("GEMINI_API_KEY", orig) }()
 	_ = os.Unsetenv("GEMINI_API_KEY")
@@ -486,14 +484,14 @@ func TestGeminiAgentTryRespondImmediate_BasicChecks(t *testing.T) {
 
 	cases := []struct {
 		name string
-		msg  tgbotapi.Message
+		msg  models.Message
 		want bool
 	}{
-		{"from_bot", tgbotapi.Message{From: &tgbotapi.User{IsBot: true}, Text: "hi", Date: int(now.Unix())}, false},
-		{"empty_text", tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "   ", Date: int(now.Unix())}, false},
-		{"command", tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "/start", Date: int(now.Unix())}, false},
-		{"old_message", tgbotapi.Message{From: &tgbotapi.User{IsBot: false}, Text: "hey", Date: int(now.Add(-10 * time.Minute).Unix())}, false},
-		{"valid", tgbotapi.Message{Chat: &tgbotapi.Chat{ID: 42}, From: &tgbotapi.User{IsBot: false}, Text: "hello", Date: int(now.Unix())}, true},
+		{"from_bot", models.Message{From: &models.User{IsBot: true}, Text: "hi", Date: int(now.Unix())}, false},
+		{"empty_text", models.Message{From: &models.User{IsBot: false}, Text: "   ", Date: int(now.Unix())}, false},
+		{"command", models.Message{From: &models.User{IsBot: false}, Text: "/start", Date: int(now.Unix())}, false},
+		{"old_message", models.Message{From: &models.User{IsBot: false}, Text: "hey", Date: int(now.Add(-10 * time.Minute).Unix())}, false},
+		{"valid", models.Message{Chat: models.Chat{ID: 42}, From: &models.User{IsBot: false}, Text: "hello", Date: int(now.Unix())}, true},
 	}
 
 	for _, c := range cases {
@@ -691,13 +689,13 @@ func waitForGeminiReply(t *testing.T, db *sql.DB, chatID int64) string {
 	return ""
 }
 
-func geminiTestMessage(chatID int64) tgbotapi.Message {
-	return tgbotapi.Message{
-		MessageID: 1,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      &tgbotapi.User{ID: 42, FirstName: "Денис"},
-		Text:      "как дела?",
-		Date:      int(time.Now().Unix()),
+func geminiTestMessage(chatID int64) models.Message {
+	return models.Message{
+		ID:   1,
+		Chat: models.Chat{ID: chatID},
+		From: &models.User{ID: 42, FirstName: "Денис"},
+		Text: "как дела?",
+		Date: int(time.Now().Unix()),
 	}
 }
 
@@ -912,11 +910,11 @@ func TestGeminiAgentPutsReplyTargetIntoPrompt(t *testing.T) {
 	chatID := int64(100020)
 	message := geminiTestMessage(chatID)
 	message.Text = "Я да"
-	message.ReplyToMessage = &tgbotapi.Message{
-		MessageID: 7,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      &tgbotapi.User{ID: selfBot.Self.ID, FirstName: "TestBot", IsBot: true},
-		Text:      "Вот 3 случайных факта из 12",
+	message.ReplyToMessage = &models.Message{
+		ID:   7,
+		Chat: models.Chat{ID: chatID},
+		From: &models.User{ID: selfBot.ID(), FirstName: "TestBot", IsBot: true},
+		Text: "Вот 3 случайных факта из 12",
 	}
 
 	if !agent.TryRespondImmediate(message) {
@@ -970,11 +968,11 @@ func TestGeminiAgentQuotesReplyToOtherUser(t *testing.T) {
 	chatID := int64(100021)
 	message := geminiTestMessage(chatID)
 	message.Text = "поддерживаю"
-	message.ReplyToMessage = &tgbotapi.Message{
-		MessageID: 7,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      &tgbotapi.User{ID: 555, FirstName: "Enroscado"},
-		Caption:   "погнали в бар",
+	message.ReplyToMessage = &models.Message{
+		ID:      7,
+		Chat:    models.Chat{ID: chatID},
+		From:    &models.User{ID: 555, FirstName: "Enroscado"},
+		Caption: "погнали в бар",
 	}
 
 	if !agent.TryRespondImmediate(message) {
@@ -1026,11 +1024,11 @@ func TestGeminiAgentDoesNotCallOtherBotsSelf(t *testing.T) {
 	chatID := int64(100022)
 	message := geminiTestMessage(chatID)
 	message.Text = "и тебе того же"
-	message.ReplyToMessage = &tgbotapi.Message{
-		MessageID: 7,
-		Chat:      &tgbotapi.Chat{ID: chatID},
-		From:      &tgbotapi.User{ID: 777, FirstName: "ЧужойБот", IsBot: true},
-		Text:      "погода сегодня ясная",
+	message.ReplyToMessage = &models.Message{
+		ID:   7,
+		Chat: models.Chat{ID: chatID},
+		From: &models.User{ID: 777, FirstName: "ЧужойБот", IsBot: true},
+		Text: "погода сегодня ясная",
 	}
 
 	if !agent.TryRespondImmediate(message) {
@@ -2106,7 +2104,7 @@ func TestNewGeminiAgentSearchModelEnv(t *testing.T) {
 			})
 			t.Cleanup(func() { http.DefaultTransport = origTransport })
 
-			agent := app.NewGeminiAgent(db, nil)
+			agent := app.NewGeminiAgent(db, nil, "")
 			if _, err := geminiAgentCallLLM(agent, context.Background(), "sys", "usr", "поищи", true); err != nil {
 				t.Fatalf("callLLM error: %v", err)
 			}

@@ -1,13 +1,14 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"log"
-	"math/rand"
 	"sync"
 	"time"
 
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	telegram "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 // Свои сообщения бот никогда не обрабатывает как входящие — Telegram их и не
@@ -25,44 +26,47 @@ func EnableOutgoingMemory(db *sql.DB) {
 	outgoingMemoryDB = db
 }
 
-func recordOutgoingMemory(chatID int64, text string) {
+func recordOutgoingMemory(chatID int64, messageID int, text string) {
 	outgoingMemoryMu.RLock()
 	db := outgoingMemoryDB
 	outgoingMemoryMu.RUnlock()
 	if db == nil {
 		return
 	}
-	if err := SaveGeminiMemory(db, chatID, 0, "bot", text, time.Now()); err != nil {
+	if err := saveGeminiBotMessage(db, chatID, messageID, text, time.Now()); err != nil {
 		log.Printf("recordOutgoingMemory: save bot memory error: %v", err)
 	}
 }
 
 // SendMessage отправляет сообщение в чат или как ответ на конкретное сообщение
-func SendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) {
-	if sendMessage(chatID, text, bot, replyToMessageID) {
-		recordOutgoingMemory(chatID, text)
+func SendMessage(chatID int64, text string, bot *telegram.Bot, replyToMessageID int) {
+	if messageID, err := sendMessage(chatID, text, bot, replyToMessageID); err == nil {
+		recordOutgoingMemory(chatID, messageID, text)
 	}
 }
 
 // SendMessageWithoutMemory отправляет сообщение, не сохраняя его в память Gemini.
 // Нужно там, где текст пересказывает данные, которые пользователь вправе стереть:
 // иначе /forgetme удалит факты, а их копия останется висеть в контексте.
-func SendMessageWithoutMemory(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) {
-	sendMessage(chatID, text, bot, replyToMessageID)
+func SendMessageWithoutMemory(chatID int64, text string, bot *telegram.Bot, replyToMessageID int) {
+	if messageID, err := sendMessage(chatID, text, bot, replyToMessageID); err == nil && messageID > 0 {
+		recordOutgoingMemory(chatID, messageID, "")
+	}
 }
 
-// sendMessage отправляет сообщение и сообщает, дошло ли оно
-func sendMessage(chatID int64, text string, bot *tgbotapi.BotAPI, replyToMessageID int) bool {
-	msg := tgbotapi.NewMessage(chatID, text)
+// sendMessage returns the ID assigned by Telegram after a successful send.
+func sendMessage(chatID int64, text string, bot *telegram.Bot, replyToMessageID int) (int, error) {
+	params := &telegram.SendMessageParams{ChatID: chatID, Text: text}
 	if replyToMessageID != 0 {
-		msg.ReplyToMessageID = replyToMessageID
+		params.ReplyParameters = &models.ReplyParameters{MessageID: replyToMessageID}
 	}
-	if _, err := bot.Send(msg); err != nil {
+	sent, err := bot.SendMessage(context.Background(), params)
+	if err != nil {
 		log.Println("Error sending message:", err)
-		return false
+		return 0, err
 	}
 	log.Printf("Message sent to chat ID %d: %s", chatID, text)
-	return true
+	return sent.ID, nil
 }
 
 // ArchiveInactiveUsers помечает пользователей как неактивных, если они не обновлялись 180 дней.
@@ -138,7 +142,7 @@ func loadPenUsersForRefresh(db *sql.DB) ([]penUserRow, error) {
 
 // RefreshUsernames пробегает всех пользователей в таблице pens и обновляет pen_name,
 // если Telegram API вернул отличный username. В случае ошибки оставляет прежний.
-func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
+func RefreshUsernames(db *sql.DB, bot *telegram.Bot) error {
 	// Загружаем список и закрываем rows до вызовов Telegram API и UPDATE,
 	// чтобы не удерживать единственное соединение в пуле (MaxOpenConns=1).
 	users, err := loadPenUsersForRefresh(db)
@@ -148,13 +152,7 @@ func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
 
 	for _, u := range users {
 		// Запрашиваем информацию о пользователе в чате
-		cfg := tgbotapi.GetChatMemberConfig{
-			ChatConfigWithUser: tgbotapi.ChatConfigWithUser{
-				ChatID: u.chatID,
-				UserID: u.userID,
-			},
-		}
-		member, err := bot.GetChatMember(cfg)
+		member, err := bot.GetChatMember(context.Background(), &telegram.GetChatMemberParams{ChatID: u.chatID, UserID: u.userID})
 		if err != nil {
 			log.Printf("RefreshUsernames: GetChatMember failed for user %d in chat %d: %v", u.userID, u.chatID, err)
 			// не обновляем, оставляем старое имя
@@ -162,12 +160,13 @@ func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
 			continue
 		}
 
-		newName := member.User.UserName
-		if newName == "" {
+		user := TelegramMemberUser(*member)
+		if user == nil || user.Username == "" {
 			// если у пользователя нет username — пропускаем
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
+		newName := user.Username
 
 		if !u.oldName.Valid || newName != u.oldName.String {
 			_, err := db.Exec("UPDATE pens SET pen_name = ? WHERE tg_pen_id = ? AND tg_chat_id = ?", newName, u.userID, u.chatID)
@@ -186,7 +185,7 @@ func RefreshUsernames(db *sql.DB, bot *tgbotapi.BotAPI) error {
 }
 
 // StartPenNameUpdateRoutine запускает горутину для еженедельного актуализирования pen_name
-func StartPenNameUpdateRoutine(db *sql.DB, bot *tgbotapi.BotAPI) {
+func StartPenNameUpdateRoutine(db *sql.DB, bot *telegram.Bot) {
     go func() {
         log.Printf("Pen name update routine started")
 
@@ -266,108 +265,4 @@ func StartArchiveRoutine(db *sql.DB) {
             time.Sleep(7 * 24 * time.Hour)
         }
     }()
-}
-
-// StartDailyCommandsRoutine запускает горутину для ежедневного вызова команд в случайное время
-func StartDailyCommandsRoutine(
-    db *sql.DB,
-    bot *tgbotapi.BotAPI,
-    chatID int64,
-    gigaHandler func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB),
-    unhHandler func(tgbotapi.Update, *tgbotapi.BotAPI, *sql.DB),
-) {
-    // Запускаем отдельные горутины для каждой команды
-    go func() {
-        log.Printf("Daily /giga command routine started")
-        for {
-            // Генерируем случайное время в течение дня (0-23 часа, 0-59 минут)
-            randomHour := rand.Intn(24)
-            randomMinute := rand.Intn(60)
-            
-            // Текущее время
-            now := time.Now()
-            
-            // Создаем время для сегодняшнего запуска
-            nextRun := time.Date(now.Year(), now.Month(), now.Day(), randomHour, randomMinute, 0, 0, now.Location())
-            
-            // Если время уже прошло, переносим на завтра
-            if nextRun.Before(now) {
-                nextRun = nextRun.AddDate(0, 0, 1)
-            }
-            
-            // Вычисляем время ожидания
-            waitTime := time.Until(nextRun)
-            
-            log.Printf("Next daily /giga command will run at: %s (in %v)",
-                nextRun.Format("2006-01-02 15:04:05"), waitTime)
-
-            // Ждем до назначенного времени
-            time.Sleep(waitTime)
-            
-            log.Printf("Executing daily /giga command...")
-            
-            // Создаем фейковое обновление для /giga
-            gigaUpdate := createFakeUpdate(chatID, "/giga")
-            gigaHandler(gigaUpdate, bot, db)
-            
-            log.Printf("Daily /giga command executed successfully")
-        }
-    }()
-
-    go func() {
-        log.Printf("Daily /unh command routine started")
-        for {
-            // Генерируем случайное время в течение дня (0-23 часа, 0-59 минут)
-            randomHour := rand.Intn(24)
-            randomMinute := rand.Intn(60)
-            
-            // Текущее время
-            now := time.Now()
-            
-            // Создаем время для сегодняшнего запуска
-            nextRun := time.Date(now.Year(), now.Month(), now.Day(), randomHour, randomMinute, 0, 0, now.Location())
-            
-            // Если время уже прошло, переносим на завтра
-            if nextRun.Before(now) {
-                nextRun = nextRun.AddDate(0, 0, 1)
-            }
-            
-            // Вычисляем время ожидания
-            waitTime := time.Until(nextRun)
-            
-            log.Printf("Next daily /unh command will run at: %s (in %v)", 
-                nextRun.Format("2006-01-02 15:04:05"), waitTime)
-            
-            // Ждем до назначенного времени
-            time.Sleep(waitTime)
-            
-            log.Printf("Executing daily /unh command...")
-            
-            // Создаем фейковое обновление для /unh
-            unhUpdate := createFakeUpdate(chatID, "/unh")
-            unhHandler(unhUpdate, bot, db)
-            
-            log.Printf("Daily /unh command executed successfully")
-        }
-    }()
-}
-
-// createFakeUpdate создает фейковое обновление для имитации команды
-func createFakeUpdate(chatID int64, command string) tgbotapi.Update {
-    return tgbotapi.Update{
-        Message: &tgbotapi.Message{
-            MessageID: 0,
-            From: &tgbotapi.User{
-                ID:        0,
-                FirstName: "Daily",
-                LastName:  "Bot",
-                UserName:  "daily_bot",
-            },
-            Chat: &tgbotapi.Chat{
-                ID: chatID,
-            },
-            Date: int(time.Now().Unix()),
-            Text: command,
-        },
-    }
 }
